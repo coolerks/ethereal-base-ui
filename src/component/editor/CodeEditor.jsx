@@ -1,39 +1,65 @@
-import React, { useRef, useState } from 'react';
-import { Editor, useMonaco } from "@monaco-editor/react";
-import { Parser } from "node-sql-parser";
+import React, {useRef, useState} from 'react';
+import {Editor} from "@monaco-editor/react";
+import {Parser} from "node-sql-parser";
+import {databases} from "./support/schema.js";
 
 function CodeEditor() {
   const [sql, setSql] = useState('');
   const parser = useRef(new Parser());
   const editorRef = useRef(null);
   const [isLight, setIsLight] = useState(true);
-  const [ast, setAst] = useState(null);
-
-  // 定义表结构
-  const tableSchema = {
-    user: [
-      { name: 'id', type: 'BIGINT', detail: 'Primary Key, Auto Increment' },
-      { name: 'username', type: 'VARCHAR(50)', detail: 'NOT NULL, UNIQUE' },
-      { name: 'password', type: 'VARCHAR(255)', detail: 'NOT NULL' },
-      { name: 'email', type: 'VARCHAR(100)', detail: 'NOT NULL, UNIQUE' },
-      { name: 'phone', type: 'VARCHAR(20)', detail: 'Nullable' },
-      { name: 'created_at', type: 'DATETIME', detail: 'NOT NULL, Default: CURRENT_TIMESTAMP' },
-      { name: 'updated_at', type: 'DATETIME', detail: 'NOT NULL, Updates on change' },
-      { name: 'status', type: 'TINYINT', detail: 'NOT NULL, Default: 1' },
-      { name: 'role', type: 'VARCHAR(20)', detail: 'NOT NULL, Default: "user"' },
-      { name: 'profile_picture', type: 'VARCHAR(255)', detail: 'Nullable' }
-    ]
-  };
+  const ast = useRef(null);
 
   // SQL 关键字列表
   const SQLKeywords = [
-    'SELECT', 'FROM', 'WHERE', 'INSERT', 'UPDATE', 'DELETE',
-    'CREATE', 'DROP', 'ALTER', 'TABLE', 'DATABASE', 'INDEX',
-    'GROUP BY', 'ORDER BY', 'HAVING', 'JOIN', 'LEFT JOIN',
-    'RIGHT JOIN', 'INNER JOIN', 'LIMIT', 'OFFSET', 'UNION',
-    'AND', 'OR', 'NOT', 'IN', 'BETWEEN', 'LIKE', 'IS NULL',
-    'IS NOT NULL'
+    "SELECT", "FROM", "WHERE", "INSERT", "UPDATE", "DELETE", "CREATE", "DROP", "ALTER", "TABLE", "DATABASE", "INDEX",
+    "GROUP BY", "ORDER BY", "HAVING", "JOIN", "LEFT JOIN", "RIGHT JOIN", "INNER JOIN", "LIMIT", "OFFSET", "UNION",
+    "AND", "OR", "NOT", "IN", "BETWEEN", "LIKE", "IS NULL", "IS NOT NULL", "INTO", "SET", "VALUES", "AS", "ON", "USING",
+    "PRIMARY KEY", "FOREIGN KEY", "REFERENCES", "UNIQUE", "CHECK", "DEFAULT", "AUTO_INCREMENT", "CHAR", "VARCHAR",
+    "TEXT", "INT", "INTEGER", "BIGINT", "FLOAT", "DOUBLE", "DECIMAL", "DATE", "TIME", "TIMESTAMP", "YEAR", "ENUM",
+    "BOOLEAN", "BIT", "BLOB", "JSON", "NULL", "TRUE", "FALSE", "CASE", "WHEN", "THEN", "ELSE", "END", "WHILE", "DO",
+    "BEGIN", "IF", "ELSIF", "END IF", "LOOP", "EXIT", "CONTINUE", "RETURN", "RETURNS", "FUNCTION", "PROCEDURE", "CALL",
+    "TRIGGER", "EVENT", "REPLACE", "GRANT", "REVOKE", "PRIVILEGES", "ALL", "ANY", "SOME", "TO", "WITH", "OPTION",
+    "SESSION", "SYSTEM", "GRANTED", "IDENTIFIED", "BY", "PASSWORD", "ADMIN", "RESOURCE", "ROLE", "ROLES", "VIEW",
+    "SCHEMA", "USER", "USERS", "GROUP", "COLUMN", "COLUMNS", "INDEXES", "VIEWS", "FUNCTIONS", "PROCEDURES", "TRIGGERS",
+    "PRIVILEGE", "EXECUTE", "ORDER", "LEFT", "RIGHT", "INNER", "OUTER", "FULL", "CROSS", "NATURAL", "IS"
   ];
+
+  // 获取当前数据库模式下的所有表
+  const getTables = () => {
+    return databases.reduce((acc, db) => {
+      acc.push(...db.tables.map(table => ({
+        name: table.name,
+        comment: table.comment,
+        ddl: table.ddl,
+        columns: table.columns
+      })));
+      return acc;
+    }, []);
+  };
+
+  // 获取指定表的所有列
+  const getColumns = (tableName) => {
+    for (const db of databases) {
+      const table = db.tables.find(t => t.name === tableName);
+      if (table) {
+        return table.columns;
+      }
+    }
+    return [];
+  };
+
+  // 从 AST 中获取别名对应的表名
+  const getTableFromAlias = (alias) => {
+    if (!ast || !ast.current?.from) return null;
+
+    const tableRef = ast.current?.from.find(item =>
+        (item.as === alias) || // 检查别名
+        (!item.as && item.table === alias) // 检查表名本身
+    );
+
+    return tableRef ? tableRef.table : null;
+  };
 
   const handleEditorChange = (val) => {
     try {
@@ -42,23 +68,67 @@ function CodeEditor() {
         database: 'MySQL'
       }
       const newAst = parser.current.astify(val, opt);
+      ast.current = newAst;
       console.log('AST:', newAst);
-      setAst(newAst);
     } catch (e) {
-      setAst(null);
     }
-  }
+  };
 
-  // 从 AST 中获取别名对应的表名
-  const getTableFromAlias = (alias) => {
-    if (!ast || !ast.from) return null;
+  // 创建代码提示项
+  const createCompletionItem = (monaco, range, item, kind) => {
+    const base = {
+      range: range,
+      kind: kind,
+      insertText: item.name || item,
+      label: item.name || item,
+    };
 
-    const tableRef = ast.from.find(item =>
-        (item.as === alias) || // 检查别名
-        (!item.as && item.table === alias) // 检查表名本身
-    );
 
-    return tableRef ? tableRef.table : null;
+    switch (kind) {
+      case monaco.languages.CompletionItemKind.Class: // 表
+        return {
+          ...base,
+          detail: `Table: ${item.name}`,
+          documentation: {
+            value: [
+              `**Description**: ${item.comment}`,
+              '```sql',
+              item.ddl,
+              '```'
+            ].join('\n')
+          }
+        };
+
+      case monaco.languages.CompletionItemKind.Field: // 列
+        return {
+          ...base,
+          detail: `Column: ${item.dataType}${item.nullable ? ' (nullable)' : ''}`,
+          documentation: {
+            value: [
+              `**Description**: ${item.comment}`,
+              `**Default**: ${item.defaultValue || 'None'}`,
+              `**Order**: ${item.order}`
+            ].join('\n')
+          }
+        };
+
+      case monaco.languages.CompletionItemKind.Function: // 函数
+        return {
+          ...base,
+          detail: `Function: ${item.name}`,
+          documentation: {
+            value: [
+              `**Return Type**: ${item.returnType}`,
+              '```sql',
+              item.ddl,
+              '```'
+            ].join('\n')
+          }
+        };
+
+      default:
+        return base;
+    }
   };
 
   const editorDidMount = (editor, monaco) => {
@@ -69,16 +139,12 @@ function CodeEditor() {
       provideCompletionItems: (model, position) => {
         const word = model.getWordUntilPosition(position);
         const lineContent = model.getLineContent(position.lineNumber);
-        console.log('Word:', word);
-        console.log('Line:', lineContent);
         const textUntilPosition = model.getValueInRange({
           startLineNumber: position.lineNumber,
           startColumn: 1,
           endLineNumber: position.lineNumber,
           endColumn: position.column
         });
-
-        console.log('Text:', textUntilPosition);
 
         const range = {
           startLineNumber: position.lineNumber,
@@ -87,63 +153,134 @@ function CodeEditor() {
           endColumn: word.endColumn
         };
 
-        // 获取输入的'.'字符之前的单词
+        // 判断当前光标位置是否在注释中，如果是则不进行代码提示
+        if (lineContent.trim().startsWith('--')) {
+          return {suggestions: []};
+        }
+
+        // 判断当前光标位置是否在字符串中，如果是则不进行代码提示，也就是光标前有奇数个单引号或者双引号
+        const matches = textUntilPosition.match(/['"]/g);
+        if (matches && matches.length % 2 !== 0) {
+          return {suggestions: []};
+        }
+
+
+        // 处理表字段提示
         if (textUntilPosition.endsWith('.')) {
-          // 获取别名，找到.之前的单词，例如SELECT t.
-          // 将 textUntilPosition split 非字母、数字字符，然后找到最后一个单词
           const words = textUntilPosition.split(/[^a-zA-Z0-9_]/);
           const alias = words[words.length - 2];
-          console.log('Table Alias:', alias);
+          const tableName = getTableFromAlias(alias) || alias;
+          const columns = getColumns(tableName);
+
+          console.log('Columns:', columns);
+          console.log('alias = ', alias)
+          console.log('ast = ', ast)
           return {
-            suggestions:[
-              {
-                label: '测试字段',
-                kind: monaco.languages.CompletionItemKind.Field,
-                insertText: '测试字段',
-                range: range,
-                detail: 'All columns',
-                documentation: 'Select all columns from the table'
-              }
-            ]
+            suggestions: columns.map(column =>
+                createCompletionItem(monaco, range, column, monaco.languages.CompletionItemKind.Field)
+            )
+          };
+        }
+
+        let suggestions = [];
+
+        // SQL 类型相关提示
+        if (ast) {
+          switch (ast.current?.type) {
+            case 'select':
+              suggestions.push(
+                  ...['SELECT', 'FROM', 'WHERE', 'GROUP BY', 'HAVING', 'ORDER BY', 'LIMIT']
+                      .map(keyword => ({
+                        label: keyword,
+                        kind: monaco.languages.CompletionItemKind.Keyword,
+                        insertText: keyword,
+                        range: range
+                      }))
+              );
+              break;
+            case 'update':
+              suggestions.push(
+                  ...['UPDATE', 'SET', 'WHERE']
+                      .map(keyword => ({
+                        label: keyword,
+                        kind: monaco.languages.CompletionItemKind.Keyword,
+                        insertText: keyword,
+                        range: range
+                      }))
+              );
+              break;
+            case 'insert':
+              suggestions.push(
+                  ...['INSERT', 'INTO', 'VALUES']
+                      .map(keyword => ({
+                        label: keyword,
+                        kind: monaco.languages.CompletionItemKind.Keyword,
+                        insertText: keyword,
+                        range: range
+                      }))
+              );
+              break;
+            case 'delete':
+              suggestions.push(
+                  ...['DELETE', 'FROM', 'WHERE']
+                      .map(keyword => ({
+                        label: keyword,
+                        kind: monaco.languages.CompletionItemKind.Keyword,
+                        insertText: keyword,
+                        range: range
+                      }))
+              );
+              break;
+              // 可以添加其他类型的处理...
           }
         }
 
-        // 默认提示
-        const suggestions = [
-          // 关键字提示
-          ...SQLKeywords.map(keyword => ({
-            label: keyword,
-            kind: monaco.languages.CompletionItemKind.Keyword,
-            insertText: keyword,
-            range: range,
-            detail: '关键字',
-            documentation: `SQL 关键字: ${keyword}`
-          })),
+        // 默认情况下所有的列名都会被提示
+        suggestions.push(
+            ...getColumns().map(column =>
+                createCompletionItem(monaco, range, column, monaco.languages.CompletionItemKind.Field)
+            )
+        );
+        // 所有的 SQL 关键字都会被提示
+        suggestions.push(
+            ...SQLKeywords.map(keyword => ({
+              label: keyword,
+              kind: monaco.languages.CompletionItemKind.Keyword,
+              insertText: keyword,
+              range: range
+            }))
+        );
+        // 输出去重复元素后的keyword
 
-          // 表名提示
-          {
-            label: 'user',
-            kind: monaco.languages.CompletionItemKind.Class,
-            insertText: 'user',
-            detail: 'User table',
-            documentation: {
-              value: 'Table containing user information'
-            },
-            range: range
-          },
+        // 添加表提示
+        suggestions.push(
+            ...getTables().map(table =>
+                createCompletionItem(monaco, range, table, monaco.languages.CompletionItemKind.Class)
+            )
+        );
 
-          // 代码片段
-          {
-            label: 'sel',
-            kind: monaco.languages.CompletionItemKind.Snippet,
-            insertText: 'SELECT ${1:*} FROM ${2:table_name}',
-            insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
-            documentation: 'Select all columns from a table',
-            range: range
+        // 添加数据库函数提示
+        databases.forEach(db => {
+          if (db.functions) {
+            suggestions.push(
+                ...db.functions.map(func =>
+                    createCompletionItem(monaco, range, func, monaco.languages.CompletionItemKind.Function)
+                )
+            );
           }
-        ];
+        });
 
-        return { suggestions };
+        // 添加代码片段提示
+        suggestions.push({
+          label: 'sel',
+          kind: monaco.languages.CompletionItemKind.Snippet,
+          insertText: 'SELECT ${1:*} FROM ${2:table_name}',
+          insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+          documentation: 'Select all columns from a table',
+          range: range
+        });
+
+        return {suggestions};
       }
     });
   };
@@ -151,9 +288,9 @@ function CodeEditor() {
   return (
       <>
         <p>{sql}</p>
+        <p>{JSON.stringify(ast)}</p>
         <Editor
             onMount={editorDidMount}
-            style={{width: '100%', height: '100%'}}
             onChange={handleEditorChange}
             options={{
               minimap: {enabled: false},
@@ -163,7 +300,7 @@ function CodeEditor() {
                 showSnippets: true
               }
             }}
-            height="90%"
+            height="90vh"
             theme={isLight ? 'light' : 'vs-dark'}
             defaultLanguage="sql"
         />
