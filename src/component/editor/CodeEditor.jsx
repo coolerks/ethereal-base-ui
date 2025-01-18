@@ -25,22 +25,22 @@ function CodeEditor() {
     let inCTE = false;
     let cteStartLine = -1;
     let parenCount = 0;
-    
+
     for (let lineNumber = 1; lineNumber <= lineCount; lineNumber++) {
       const lineContent = model.getLineContent(lineNumber).trim();
       const upperLine = lineContent.toUpperCase();
-      
+
       // 跳过空行和注释
       if (!lineContent || lineContent.startsWith('--') || lineContent.startsWith('/*')) {
         continue;
       }
-      
+
       // 计数括号以跟踪 CTE 和子查询结构
       for (const char of lineContent) {
         if (char === '(') parenCount++;
         if (char === ')') parenCount--;
       }
-      
+
       // 检查 CTE 开始
       if (upperLine.startsWith('WITH ') && parenCount === 0) {
         inCTE = true;
@@ -48,20 +48,20 @@ function CodeEditor() {
         statements.add(lineNumber); // 添加 WITH 开始的行
         continue;
       }
-      
+
       // 检查独立的 SQL 语句（非 CTE 部分）
       if (!inCTE && parenCount === 0 && (
-        upperLine.startsWith('SELECT') ||
-        upperLine.startsWith('INSERT') ||
-        upperLine.startsWith('UPDATE') ||
-        upperLine.startsWith('DELETE') ||
-        upperLine.startsWith('CREATE') ||
-        upperLine.startsWith('ALTER') ||
-        upperLine.startsWith('DROP')
+          upperLine.startsWith('SELECT') ||
+          upperLine.startsWith('INSERT') ||
+          upperLine.startsWith('UPDATE') ||
+          upperLine.startsWith('DELETE') ||
+          upperLine.startsWith('CREATE') ||
+          upperLine.startsWith('ALTER') ||
+          upperLine.startsWith('DROP')
       )) {
         statements.add(lineNumber);
       }
-      
+
       // 语句结束时重置 CTE 标志
       if (lineContent.endsWith(';')) {
         inCTE = false;
@@ -69,11 +69,12 @@ function CodeEditor() {
         parenCount = 0;
       }
     }
-    
+
     return Array.from(statements);
   };
 
-  const handleRunButtonClick = (editor, lineNumber) => {
+  // 通过行号查找完整的 SQL 语句
+  const findSQLStatementsByLineNumbers = (editor, lineNumber) => {
     const model = editor.getModel();
     if (!model) return;
 
@@ -85,6 +86,10 @@ function CodeEditor() {
     // 向上搜索 CTE 开始位置
     for (let i = lineNumber; i >= 1; i--) {
       const lineContent = model.getLineContent(i).trim().toUpperCase();
+      // 如果不是注释
+      if (!lineContent.startsWith('--') && !lineContent.startsWith('/*') && !lineContent.startsWith('#') && lineContent.trim().endsWith(';')) {
+        break;
+      }
       if (lineContent.startsWith('WITH ')) {
         startLine = i;
         break;
@@ -109,17 +114,19 @@ function CodeEditor() {
     }
 
     // 获取完整的 SQL 语句
-    const sql = model.getValueInRange({
+    return model.getValueInRange({
       startLineNumber: startLine,
       startColumn: 1,
       endLineNumber: endLine,
       endColumn: model.getLineMaxColumn(endLine)
     });
+  }
 
+  const handleRunButtonClick = (editor, lineNumber) => {
+    const sql = findSQLStatementsByLineNumbers(editor, lineNumber);
     console.log('Running SQL:', sql);
     // 添加你的 SQL 执行逻辑
   };
-
 
 
   // Function to update run button decorations
@@ -153,13 +160,12 @@ function CodeEditor() {
       options: {
         isWholeLine: false,
         glyphMarginClassName: 'sql-run-button',
-        glyphMarginHoverMessage: { value: 'Run this SQL statement' }
+        glyphMarginHoverMessage: {value: 'Run this SQL statement'}
       }
     }));
 
     decorationsCollection.current.set(newDecorations);
   };
-
 
 
   // 获取当前数据库模式下的所有表
@@ -197,6 +203,12 @@ function CodeEditor() {
 
   // 获取当前位置已使用的表名和别名
   const getUsedTablesAndAliases = () => {
+    if (ast.current && ast.current.length) {
+      return new Map(ast.current[0].from.map(item => [
+        item.as || item.table,
+        item.table
+      ]))
+    }
     if (!ast.current?.from) return new Map();
 
     return new Map(ast.current.from.map(item => [
@@ -208,7 +220,7 @@ function CodeEditor() {
   // 获取当前位置所在的SQL子句
   const getCurrentClause = (textUntilPosition) => {
     const upperText = textUntilPosition.toUpperCase();
-    if (!sqlRef.current.includes('SELECT')) return '';
+    if (!upperText.includes('SELECT')) return '';
 
     if (!upperText.includes('FROM')) return 'SELECT';
     if (!upperText.includes('WHERE') && !upperText.includes('GROUP BY') &&
@@ -265,14 +277,35 @@ function CodeEditor() {
     return '';
   };
 
+  // 获取当前光标处的 SQL 开始行号
+  const getSQLStartLine = (model, position) => {
+    const lineNumbers = findSQLStatements(model)
+    // lineNumbers 从大到小排序
+    lineNumbers.sort((a, b) => b - a);
+    // 找出小于等于当前行号第第一个
+    return lineNumbers.find(line => line <= position.lineNumber);
+  }
+
   const handleEditorChange = (val) => {
     try {
       setSql(val);
-      sqlRef.current = val;
+
+      const editor = editorRef.current;
+      if (!editor) return;
+      const position = editor.getPosition();
+      const model = editor.getModel();
+      if (!model) return;
+      // 找出小于等于当前行号第第一个
+      const lineNumber = getSQLStartLine(model, position);
+      const statement = findSQLStatementsByLineNumbers(editor, lineNumber);
+
+      console.log('Current SQL statement:', statement);
+
+      sqlRef.current = statement;
       const opt = {database: 'MySQL'};
-      let preSql = val;
-      if (val.trim().match(/(WHERE|LEFT JOIN|RIGHT JOIN|INNERR JOIN|JOIN|GROUP BY|ORDER BY)\s*$/i)) {
-        preSql = val.trim().replace(/(WHERE|JOIN|GROUP BY|ORDER BY)\s*$/i, '');
+      let preSql = statement;
+      if (statement.trim().match(/(WHERE|LEFT JOIN|RIGHT JOIN|INNERR JOIN|JOIN|GROUP BY|ORDER BY)\s*$/i)) {
+        preSql = statement.trim().replace(/(WHERE|LEFT JOIN|RIGHT JOIN|INNERR JOIN|JOIN|GROUP BY|ORDER BY)\s*$/i, '');
       }
       ast.current = parser.current.astify(preSql, opt);
       console.log('AST:', ast.current);
@@ -343,8 +376,6 @@ function CodeEditor() {
   // 获取字段提示
   const getColumnSuggestions = (monaco, range, tableName, alias = null) => {
     const columns = getColumns(tableName);
-    console.log('Columns:', columns);
-    console.log('Alias:', alias);
     return columns.map(column => {
       const suggestion = createColumnSuggestion(monaco, range, {...column, tableName});
       if (alias) {
@@ -592,9 +623,6 @@ function CodeEditor() {
     });
 
 
-
-
-
     // 注册hover提供器
     monaco.languages.registerHoverProvider('sql', {
       provideHover: (model, position) => {
@@ -602,29 +630,26 @@ function CodeEditor() {
         if (!word) return null;
 
         const lineContent = model.getLineContent(position.lineNumber);
+        const startLineNumber = getSQLStartLine(model, position);
         // textUntilPosition 为鼠标移动的位置之前的文本
         const textUntilPosition = model.getValueInRange({
-          // startLineNumber: position.lineNumber,
+          startLineNumber,
           startColumn: 1,
           endLineNumber: position.lineNumber,
           endColumn: position.column
         });
+        console.log('textUntilPosition:', textUntilPosition);
         const currentClause = getCurrentClause(textUntilPosition);
-        console.log('Current clause:', currentClause, 'word = ', word);
-        console.log('Line content:', lineContent);
-        console.log('Text until position:', textUntilPosition);
         let statement = textUntilPosition
         // 鼠标停留的 textUntilPosition 位置不一定是一个完整的单词，可能是部分单词，也可能是部分字母，所以按照字母数字下划线为为整体进行切片，所以需要判断是否以 word.word 结尾，如果不是，那么需要按照split切片找到 textUntilPosition 的最后一个单词
         if (!lineContent.endsWith(word.word)) {
           const words = textUntilPosition.split(/[^a-zA-Z0-9_]/);
-          console.log('Words:', words);
           // 取最后一个单词
           const w = words[words.length - 1];
           // statement 根据word.word补全
           const suffix = word.word.substring(w.length, word.word.length);
           statement = statement + suffix;
         }
-        console.log('Statement:', statement);
 
         switch (currentClause) {
           case 'SELECT':
@@ -734,13 +759,16 @@ function CodeEditor() {
         };
 
         const lineContent = model.getLineContent(position.lineNumber);
+        const startLineNumber = getSQLStartLine(model, position);
         // 当前光标前的文本
         const textUntilPosition = model.getValueInRange({
-          // startLineNumber: position.lineNumber,
+          startLineNumber,
           startColumn: 1,
           endLineNumber: position.lineNumber,
           endColumn: position.column
         });
+
+        console.log('provider = :', textUntilPosition);
 
         // 检查是否在注释或字符串中
         if (lineContent.trim().startsWith('--') ||
@@ -750,6 +778,9 @@ function CodeEditor() {
 
         const currentClause = getCurrentClause(textUntilPosition);
         const usedTablesAndAliases = getUsedTablesAndAliases();
+
+        console.log('currentClause:', currentClause);
+        console.log('usedTablesAndAliases:', usedTablesAndAliases);
 
         // 处理表字段提示
         if (textUntilPosition.endsWith('.')) {
@@ -773,7 +804,6 @@ function CodeEditor() {
           case 'GROUP BY':
           case 'HAVING':
           case 'ORDER BY':
-            console.log('Condition clause');
             return {suggestions: handleConditionClauseSuggestions(monaco, range, currentClause, usedTablesAndAliases)};
           default:
             // 判断是否是 DML 语句
