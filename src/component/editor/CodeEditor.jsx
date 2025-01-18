@@ -68,7 +68,12 @@ function CodeEditor() {
       const opt = {
         database: 'MySQL'
       }
-      const newAst = parser.current.astify(val, opt);
+      let preSql = val;
+      // 判断 val 末尾是不是 where、四种 join、group by、order by，如果有（以及后边带空格），代表 SQL 语句未结束，需要去除后解析
+      if (val.trim().match(/(WHERE|LEFT JOIN|RIGHT JOIN|INNERR JOIN|JOIN|GROUP BY|ORDER BY)\s*$/i)) {
+        preSql = val.trim().replace(/(WHERE|JOIN|GROUP BY|ORDER BY)\s*$/i, '');
+      }
+      const newAst = parser.current.astify(preSql, opt);
       ast.current = newAst;
       console.log('AST:', newAst);
     } catch (e) {
@@ -356,7 +361,7 @@ function CodeEditor() {
               });
             }
             suggestions.push(
-                ...['WHERE', 'JOIN', 'LEFT JOIN', 'RIGHT JOIN', 'INNER JOIN', 'ORDER BY'].map(join => ({
+                ...['WHERE', 'JOIN', 'LEFT JOIN', 'RIGHT JOIN', 'INNER JOIN', 'GROUP BY', 'ORDER BY'].map(join => ({
                   label: join,
                   kind: monaco.languages.CompletionItemKind.Keyword,
                   insertText: join,
