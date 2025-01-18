@@ -39,98 +39,12 @@ function CodeEditor() {
   // 从 AST 中获取别名对应的表名
   const getTableFromAlias = (alias) => {
     if (!ast || !ast.current?.from) return null;
-
     const tableRef = ast.current?.from.find(item =>
-        (item.as === alias) || // 检查别名
-        (!item.as && item.table === alias) // 检查表名本身
+        (item.as === alias) || (!item.as && item.table === alias)
     );
-
     return tableRef ? tableRef.table : null;
   };
 
-  const handleEditorChange = (val) => {
-    try {
-      setSql(val);
-      const opt = {
-        database: 'MySQL'
-      }
-      let preSql = val;
-      // 判断 val 末尾是不是 where、四种 join、group by、order by，如果有（以及后边带空格），代表 SQL 语句未结束，需要去除后解析
-      if (val.trim().match(/(WHERE|LEFT JOIN|RIGHT JOIN|INNERR JOIN|JOIN|GROUP BY|ORDER BY)\s*$/i)) {
-        preSql = val.trim().replace(/(WHERE|JOIN|GROUP BY|ORDER BY)\s*$/i, '');
-      }
-      const newAst = parser.current.astify(preSql, opt);
-      ast.current = newAst;
-      console.log('AST:', newAst);
-    } catch (e) {
-    }
-  };
-
-  // 创建代码提示项
-  const createCompletionItem = (monaco, range, item, kind) => {
-    const base = {
-      range: range,
-      kind: kind,
-      insertText: item.name || item,
-      label: item.name || item,
-    };
-
-
-    switch (kind) {
-      case monaco.languages.CompletionItemKind.Class: // 表
-        return {
-          ...base,
-          detail: `Table: ${item.name}`,
-          sortText: '0001',
-          documentation: {
-            value: [
-              `**Description**: ${item.comment}`,
-              '```sql',
-              item.ddl,
-              '```'
-            ].join('\n')
-          }
-        };
-
-      case monaco.languages.CompletionItemKind.Field: // 列
-        return {
-          ...base,
-          label: item.name,
-          kind: monaco.languages.CompletionItemKind.Field,
-          insertText: item.name,
-          range: range,
-          detail: `Column: ${item.dataType}`,
-          sortText: '0002',
-          documentation: {
-            value: [
-              `**Comment**: ${item.comment}\n`,
-              `**Table**: ${item.tableName}\n`,
-              `**Type**: ${item.dataType}\n`,
-              `**Nullable**: ${item.nullable ? 'true' : 'false'}\n`,
-              `**Default**: ${item.defaultValue || 'null'}\n`
-            ].join('\n')
-          },
-        };
-
-      case monaco.languages.CompletionItemKind.Function: // 函数
-        return {
-          ...base,
-          detail: `Function: ${item.name}`,
-          documentation: {
-            value: [
-              `**Description**: ${item.doc}\n`,
-              `**Support**: ${item.support.join(', ')}`
-            ].join('\n')
-          },
-          sortText: '9999',
-        };
-
-      default:
-        return base;
-    }
-  };
-
-  // 获取已使用的表和别名的映射关系
   const getUsedTablesAndAliases = () => {
     if (!ast.current?.from) return new Map();
 
@@ -200,16 +114,334 @@ function CodeEditor() {
     return '';
   };
 
+  const handleEditorChange = (val) => {
+    try {
+      setSql(val);
+      const opt = {database: 'MySQL'};
+      let preSql = val;
+      if (val.trim().match(/(WHERE|LEFT JOIN|RIGHT JOIN|INNERR JOIN|JOIN|GROUP BY|ORDER BY)\s*$/i)) {
+        preSql = val.trim().replace(/(WHERE|JOIN|GROUP BY|ORDER BY)\s*$/i, '');
+      }
+      ast.current = parser.current.astify(preSql, opt);
+      console.log('AST:', ast.current);
+    } catch (e) {
+    }
+  };
+
+  // 创建基础提示项
+  const createBaseSuggestion = (monaco, range, item, kind) => ({
+    range,
+    kind,
+    insertText: item.name || item,
+    label: item.name || item,
+  });
+
+  // 创建表提示项
+  const createTableSuggestion = (monaco, range, item) => ({
+    ...createBaseSuggestion(monaco, range, item, monaco.languages.CompletionItemKind.Class),
+    detail: `Table: ${item.name}`,
+    sortText: '0001',
+    documentation: {
+      value: [
+        `**Description**: ${item.comment}`,
+        '```sql',
+        item.ddl,
+        '```'
+      ].join('\n')
+    }
+  });
+
+  // 创建字段提示项
+  const createColumnSuggestion = (monaco, range, item) => ({
+    ...createBaseSuggestion(monaco, range, item, monaco.languages.CompletionItemKind.Field),
+    detail: `Column: ${item.dataType}`,
+    sortText: '0002',
+    documentation: {
+      value: [
+        `**Comment**: ${item.comment}\n`,
+        `**Table**: ${item.tableName}\n`,
+        `**Type**: ${item.dataType}\n`,
+        `**Nullable**: ${item.nullable ? 'true' : 'false'}\n`,
+        `**Default**: ${item.defaultValue || 'null'}\n`
+      ].join('\n')
+    }
+  });
+
+  // 创建函数提示项
+  const createFunctionSuggestion = (monaco, range, item) => ({
+    ...createBaseSuggestion(monaco, range, item, monaco.languages.CompletionItemKind.Function),
+    detail: `Function: ${item.name}`,
+    documentation: {
+      value: [
+        `**Description**: ${item.doc}\n`,
+        `**Support**: ${item.support.join(', ')}`
+      ].join('\n')
+    },
+    sortText: '9999'
+  });
+
+  // 创建关键字提示项
+  const createKeywordSuggestion = (monaco, range, keyword) => ({
+    label: keyword,
+    kind: monaco.languages.CompletionItemKind.Keyword,
+    insertText: keyword,
+    range
+  });
+
+  // 获取字段提示
+  const getColumnSuggestions = (monaco, range, tableName, alias = null) => {
+    const columns = getColumns(tableName);
+    return columns.map(column => {
+      const suggestion = createColumnSuggestion(monaco, range, {...column, tableName});
+      if (alias) {
+        suggestion.label = `${alias}.${column.name}`;
+        suggestion.insertText = `${alias}.${column.name}`;
+      }
+      return suggestion;
+    });
+  };
+
+  // 处理表字段提示
+  const handleTableColumnSuggestions = (monaco, range, words) => {
+    const alias = words[words.length - 2];
+    const tableName = getTableFromAlias(alias) || alias;
+    return getColumns(tableName).map(column =>
+        createColumnSuggestion(monaco, range, {...column, tableName})
+    );
+  };
+
+  // 处理SELECT子句提示
+  const handleSelectClauseSuggestions = (monaco, range, usedTablesAndAliases) => {
+    let suggestions = [];
+
+    // 添加表别名和字段
+    for (const [alias, tableName] of usedTablesAndAliases) {
+      suggestions.push({
+        label: alias,
+        kind: monaco.languages.CompletionItemKind.Variable,
+        insertText: alias,
+        range,
+        sortText: '0001'
+      });
+      suggestions.push(...getColumnSuggestions(monaco, range, tableName, alias));
+    }
+
+    // 添加所有字段
+    getTables().forEach(table => {
+      suggestions.push(...getColumnSuggestions(monaco, range, table.name));
+    });
+
+    // 添加函数和FROM关键字
+    suggestions.push(
+        ...functions.map(func => createFunctionSuggestion(monaco, range, func)),
+        createKeywordSuggestion(monaco, range, 'FROM')
+    );
+
+    return suggestions;
+  };
+
+  // 处理FROM/JOIN子句提示
+  const handleFromJoinClauseSuggestions = (monaco, range, currentClause) => {
+    const suggestions = getTables().map(table => createTableSuggestion(monaco, range, table));
+
+    if (currentClause !== 'FROM') {
+      suggestions.push(createKeywordSuggestion(monaco, range, 'ON'));
+    }
+
+    const keywords = ['WHERE', 'JOIN', 'LEFT JOIN', 'RIGHT JOIN', 'INNER JOIN', 'GROUP BY', 'ORDER BY'];
+    suggestions.push(...keywords.map(keyword => createKeywordSuggestion(monaco, range, keyword)));
+
+    return suggestions;
+  };
+
+  // 处理条件子句提示
+  const handleConditionClauseSuggestions = (monaco, range, currentClause, usedTablesAndAliases) => {
+    let suggestions = [];
+
+    // 添加表名、别名和字段提示
+    for (const [alias, tableName] of usedTablesAndAliases) {
+      suggestions.push(
+          createTableSuggestion(monaco, range, {name: tableName}),
+          ...(alias !== tableName ? [{
+            label: alias,
+            kind: monaco.languages.CompletionItemKind.Variable,
+            insertText: alias,
+            range,
+            sortText: '0001'
+          }] : []),
+          ...getColumnSuggestions(monaco, range, tableName, alias)
+      );
+    }
+
+    // 根据不同子句添加特定关键字
+    const clauseKeywords = {
+      'ON': ['JOIN', 'LEFT JOIN', 'RIGHT JOIN', 'INNER JOIN', 'WHERE', 'GROUP BY', 'ORDER BY',
+        'AND', 'OR', 'NOT', 'IN', 'BETWEEN', 'LIKE', 'IS NULL', 'IS NOT NULL'],
+      'WHERE': ['AND', 'OR', 'NOT', 'IN', 'BETWEEN', 'LIKE', 'IS NULL', 'IS NOT NULL', 'GROUP BY', 'ORDER BY'],
+      'GROUP BY': ['HAVING', 'ORDER BY'],
+      'HAVING': ['AND', 'OR', 'NOT', 'IN', 'BETWEEN', 'LIKE', 'IS NULL', 'IS NOT NULL', 'ORDER BY'],
+      'ORDER BY': ['ASC', 'DESC']
+    };
+
+    if (clauseKeywords[currentClause]) {
+      suggestions.push(...clauseKeywords[currentClause].map(keyword =>
+          createKeywordSuggestion(monaco, range, keyword)
+      ));
+    }
+
+    // 为HAVING子句添加聚合函数
+    if (currentClause === 'HAVING') {
+      suggestions.push(...functions.map(func => createFunctionSuggestion(monaco, range, func)));
+    }
+
+    return suggestions;
+  };
+
+  // 获取 insert into 的代码提示
+  const getInsertIntoSuggestions = (textUntilPosition, monaco, range) => {
+    const suggestions = [];
+    // 判读是否有表名，如果有表名则提示字段，用正则匹配表名
+    const matches = textUntilPosition.match(/INSERT INTO ([a-zA-Z0-9_]+)/i);
+    if (matches && matches[1]) {
+      const columns = getColumns(matches[1]);
+      suggestions.push(
+          ...columns.map(column => {
+                const columnItem = {...column, tableName: matches[1]};
+                return createColumnSuggestion(monaco, range, columnItem);
+              }
+          ));
+    } else {
+      // 提示表名，插入的内容为表名(字段1, 字段2, ...) VALUES ()
+      suggestions.push(...(getTables().map(table => ({
+        label: table.name,
+        kind: monaco.languages.CompletionItemKind.Class,
+        insertText: `${table.name}(${table.columns.map(col => col.name).join(', ')}) VALUES ()`,
+        range: range,
+        sortText: '0001'
+      }))));
+    }
+    return {suggestions};
+  }
+
+  // 获取 update 的代码提示
+  const getUpdateSuggestions = (textUntilPosition, monaco, range) => {
+    const suggestions = [];
+    // 判断是否有表名，如果有表名则提示字段，用正则匹配表名
+    const matches = textUntilPosition.match(/UPDATE ([a-zA-Z0-9_]+)/i);
+    if (matches && matches[1]) {
+      const columns = getColumns(matches[1]);
+      suggestions.push(
+          ...columns.map(column => {
+                const columnItem = {...column, tableName: matches[1]};
+                return createColumnSuggestion(monaco, range, columnItem);
+              }
+          ));
+      // 如果不存在 SET 关键字，则提示 SET
+      if (!textUntilPosition.toUpperCase().includes('SET')) {
+        suggestions.push({
+          label: 'SET',
+          kind: monaco.languages.CompletionItemKind.Keyword,
+          insertText: 'SET',
+          range: range,
+          sortText: '0000'
+        });
+      }
+      // 如果不存在 WHERE 关键字，则提示 WHERE
+      if (!textUntilPosition.toUpperCase().includes('WHERE')) {
+        suggestions.push({
+          label: 'WHERE',
+          kind: monaco.languages.CompletionItemKind.Keyword,
+          insertText: 'WHERE',
+          range: range,
+          sortText: '0003'
+        });
+      }
+    } else {
+      // 提示表名
+      suggestions.push(...(getTables().map(table => ({
+        label: table.name,
+        kind: monaco.languages.CompletionItemKind.Class,
+        insertText: table.name,
+        range: range,
+        sortText: '0001'
+      }))));
+
+    }
+    // 如果当前光标位于 where 后，则提示 AND、OR、NOT、IN、BETWEEN、LIKE、IS NULL、IS NOT NULL
+    if (textUntilPosition.toUpperCase().includes('WHERE')) {
+      suggestions.push(
+          ...['AND', 'OR', 'NOT', 'IN', 'BETWEEN', 'LIKE', 'IS NULL', 'IS NOT NULL']
+              .map(keyword => ({
+                label: keyword,
+                kind: monaco.languages.CompletionItemKind.Keyword,
+                insertText: keyword,
+                range: range,
+              }))
+      );
+    }
+    return {suggestions};
+  }
+
+  // 获取 delete 的代码提示
+  const getDeleteSuggestions = (textUntilPosition, monaco, range) => {
+    const suggestions = [];
+    // 判断是否有表名，如果有表名则提示字段，用正则匹配表名
+    const matches = textUntilPosition.match(/DELETE FROM ([a-zA-Z0-9_]+)/i);
+    if (matches && matches[1]) {
+      const columns = getColumns(matches[1]);
+      suggestions.push(
+          ...columns.map(column => {
+                const columnItem = {...column, tableName: matches[1]};
+                return createColumnSuggestion(monaco, range, columnItem);
+              }
+          ));
+      // 如果不存在 WHERE 关键字，则提示 WHERE
+      if (!textUntilPosition.toUpperCase().includes('WHERE')) {
+        suggestions.push({
+          label: 'WHERE',
+          kind: monaco.languages.CompletionItemKind.Keyword,
+          insertText: 'WHERE',
+          range: range,
+          sortText: '0003'
+        });
+      }
+    } else {
+      // 判断是否有 FROM 关键字，如果没有则提示 FROM
+      if (!textUntilPosition.toUpperCase().includes('FROM')) {
+        suggestions.push({
+          label: 'FROM',
+          kind: monaco.languages.CompletionItemKind.Keyword,
+          insertText: 'FROM',
+          range: range,
+          sortText: '0000'
+        });
+      }
+      // 提示表名
+      suggestions.push(...(getTables().map(table => ({
+        label: table.name,
+        kind: monaco.languages.CompletionItemKind.Class,
+        insertText: table.name,
+        range: range,
+        sortText: '0001'
+      }))));
+    }
+    return {suggestions};
+  }
+
   const editorDidMount = (editor, monaco) => {
     editorRef.current = editor;
 
     monaco.languages.registerCompletionItemProvider('sql', {
       triggerCharacters: ['.', ' '],
       provideCompletionItems: (model, position) => {
-        // 状态变量，用于判断是否命各种判断条件
-        let canProvide = false;
-
         const word = model.getWordUntilPosition(position);
+        const range = {
+          startLineNumber: position.lineNumber,
+          endLineNumber: position.lineNumber,
+          startColumn: word.startColumn,
+          endColumn: word.endColumn
+        };
+
         const lineContent = model.getLineContent(position.lineNumber);
         const textUntilPosition = model.getValueInRange({
           startLineNumber: position.lineNumber,
@@ -218,423 +450,57 @@ function CodeEditor() {
           endColumn: position.column
         });
 
-        const range = {
-          startLineNumber: position.lineNumber,
-          endLineNumber: position.lineNumber,
-          startColumn: word.startColumn,
-          endColumn: word.endColumn
-        };
-
-        // 判断当前光标位置是否在注释中，如果是则不进行代码提示
-        if (lineContent.trim().startsWith('--')) {
-          canProvide = true;
-          return {suggestions: []};
-        }
-
-        // 判断当前光标位置是否在字符串中，如果是则不进行代码提示，也就是光标前有奇数个单引号或者双引号
-        const matches = textUntilPosition.match(/['"]/g);
-        if (matches && matches.length % 2 !== 0) {
-          canProvide = true;
+        // 检查是否在注释或字符串中
+        if (lineContent.trim().startsWith('--') ||
+            (textUntilPosition.match(/['"]/g)?.length ?? 0) % 2 !== 0) {
           return {suggestions: []};
         }
 
         const currentClause = getCurrentClause(textUntilPosition);
         const usedTablesAndAliases = getUsedTablesAndAliases();
-        let suggestions = [];
 
         // 处理表字段提示
         if (textUntilPosition.endsWith('.')) {
-          canProvide = true;
-          const words = textUntilPosition.split(/[^a-zA-Z0-9_]/);
-          const alias = words[words.length - 2];
-          const tableName = getTableFromAlias(alias) || alias;
-          const columns = getColumns(tableName);
-
-          console.log('Columns:', columns);
-          console.log('alias = ', alias)
-          console.log('ast = ', ast)
           return {
-            suggestions: columns.map(column => {
-                  const columnItem = {...column, tableName};
-                  return createCompletionItem(monaco, range, columnItem, monaco.languages.CompletionItemKind.Field)
-                }
-            )
+            suggestions: handleTableColumnSuggestions(monaco, range, textUntilPosition.split(/[^a-zA-Z0-9_]/))
           };
         }
 
-
-        // 根据不同子句提供不同的提示
+        // 根据不同子句提供提示
         switch (currentClause) {
           case 'SELECT':
-            canProvide = true;
-            for (const [alias, tableName] of usedTablesAndAliases) {
-              // 添加表别名
-              suggestions.push({
-                label: alias,
-                kind: monaco.languages.CompletionItemKind.Variable,
-                insertText: alias,
-                range: range,
-                sortText: '0001'
-              });
-
-              // 添加表字段
-              const columns = getColumns(tableName);
-              console.log('Columns:', columns);
-              suggestions.push(
-                  ...columns.map(column => ({
-                    label: `${alias}.${column.name}`,
-                    kind: monaco.languages.CompletionItemKind.Field,
-                    insertText: `${alias}.${column.name}`,
-                    range: range,
-                    detail: `Column: ${column.dataType}`,
-                    documentation: {
-                      value: [
-                        `**Comment**: ${column.comment}\n`,
-                        `**Table**: ${column.tableName}\n`,
-                        `**Type**: ${column.dataType}\n`,
-                        `**Nullable**: ${column.nullable ? 'true' : 'false'}\n`,
-                        `**Default**: ${column.defaultValue || 'null'}\n`
-                      ].join('\n')
-                    },
-                    sortText: '0002'
-                  }))
-              );
-            }
-            // 添加所有字段
-            for (const table of getTables()) {
-              suggestions.push(
-                  ...table.columns.map(column => {
-                        const columnItem = {...column, tableName: table.name};
-                        return createCompletionItem(monaco, range, columnItem, monaco.languages.CompletionItemKind.Field)
-                      }
-                  )
-              );
-            }
-            // 添加聚合函数
-            suggestions.push(
-                ...functions.map(func =>
-                    createCompletionItem(monaco, range, func, monaco.languages.CompletionItemKind.Function)
-                )
-            );
-            // 添加 FROM
-            suggestions.push({
-              label: 'FROM',
-              kind: monaco.languages.CompletionItemKind.Keyword,
-              insertText: 'FROM',
-              range: range,
-              sortText: '0000'
-            });
-            break;
-
+            return {suggestions: handleSelectClauseSuggestions(monaco, range, usedTablesAndAliases)};
           case 'FROM':
           case 'JOIN':
           case 'LEFT JOIN':
           case 'RIGHT JOIN':
           case 'INNER JOIN':
-            canProvide = true;
-            suggestions.push(
-                ...getTables().map(table =>
-                    createCompletionItem(monaco, range, table, monaco.languages.CompletionItemKind.Class)
-                )
-            );
-            // 如果不是 FROM 子句，添加 on
-            if (currentClause !== 'FROM') {
-              suggestions.push({
-                label: 'ON',
-                kind: monaco.languages.CompletionItemKind.Keyword,
-                insertText: 'ON',
-                range: range,
-              });
-            }
-            suggestions.push(
-                ...['WHERE', 'JOIN', 'LEFT JOIN', 'RIGHT JOIN', 'INNER JOIN', 'GROUP BY', 'ORDER BY'].map(join => ({
-                  label: join,
-                  kind: monaco.languages.CompletionItemKind.Keyword,
-                  insertText: join,
-                  range: range,
-                }))
-            );
-            break;
-
+            return {suggestions: handleFromJoinClauseSuggestions(monaco, range, currentClause)};
           case 'ON':
           case 'WHERE':
           case 'GROUP BY':
           case 'HAVING':
           case 'ORDER BY':
-            canProvide = true;
-            for (const [alias, tableName] of usedTablesAndAliases) {
-              // 添加表名和别名
-              suggestions.push({
-                label: tableName,
-                kind: monaco.languages.CompletionItemKind.Class,
-                insertText: tableName,
-                range: range,
-                sortText: '0001'
-              });
+            return {suggestions: handleConditionClauseSuggestions(monaco, range, currentClause, usedTablesAndAliases)};
+          default:
+            if (textUntilPosition.toUpperCase().includes('INSERT INTO')) {
+              return getInsertIntoSuggestions(textUntilPosition, monaco, range);
+            } else if (textUntilPosition.toUpperCase().includes('UPDATE')) {
+              return getUpdateSuggestions(textUntilPosition, monaco, range);
+            } else if (textUntilPosition.toUpperCase().includes('DELETE')) {
+              return getDeleteSuggestions(textUntilPosition, monaco, range);
+            }
 
-              if (alias !== tableName) {
-                suggestions.push({
-                  label: alias,
-                  kind: monaco.languages.CompletionItemKind.Variable,
-                  insertText: alias,
-                  range: range,
-                  sortText: '0001'
-                });
-              }
-
-              // 添加字段
-              const columns = getColumns(tableName);
-              suggestions.push(
-                  ...columns.map(column => ({
-                        label: `${alias}.${column.name}`,
-                        kind: monaco.languages.CompletionItemKind.Field,
-                        insertText: `${alias}.${column.name}`,
-                        range: range,
-                        detail: `Column: ${column.dataType}`,
-                        documentation: {
-                          value: [
-                            `**Comment**: ${column.comment}\n`,
-                            `**Table**: ${column.tableName}\n`,
-                            `**Type**: ${column.dataType}\n`,
-                            `**Nullable**: ${column.nullable ? 'true' : 'false'}\n`,
-                            `**Default**: ${column.defaultValue || 'null'}\n`
-                          ].join('\n')
-                        },
-                        sortText: '0002'
-                      }
-                  ))
-              );
-            }
-            // 如果是 ON 子句，添加 四种 JOIN、WHERE 、GROUP BY、ORDER BY
-            if (currentClause === 'ON') {
-              suggestions.push(
-                  ...['JOIN', 'LEFT JOIN', 'RIGHT JOIN', 'INNER JOIN', 'WHERE', 'GROUP BY', 'ORDER BY',
-                    'AND', 'OR', 'NOT', 'IN', 'BETWEEN', 'LIKE', 'IS NULL', 'IS NOT NULL'].map(join => ({
-                    label: join,
-                    kind: monaco.languages.CompletionItemKind.Keyword,
-                    insertText: join,
-                    range: range,
-                  }))
-              );
-            }
-            // 如果是 WHERE 子句，添加 AND、OR、NOT、IN、BETWEEN、LIKE、IS NULL、IS NOT NULL
-            if (currentClause === 'WHERE') {
-              suggestions.push(
-                  ...['AND', 'OR', 'NOT', 'IN', 'BETWEEN', 'LIKE', 'IS NULL', 'IS NOT NULL', 'GROUP BY', 'ORDER BY']
-                      .map(keyword => ({
-                        label: keyword,
-                        kind: monaco.languages.CompletionItemKind.Keyword,
-                        insertText: keyword,
-                        range: range,
-                      }))
-              );
-            }
-            // 如果是 GROUP BY 子句，添加 HAVING
-            if (currentClause === 'GROUP BY') {
-              suggestions.push({
-                label: 'HAVING',
-                kind: monaco.languages.CompletionItemKind.Keyword,
-                insertText: 'HAVING',
-                range: range,
-              });
-              // order by
-              suggestions.push({
-                label: 'ORDER BY',
-                kind: monaco.languages.CompletionItemKind.Keyword,
-                insertText: 'ORDER BY',
-                range: range,
-              });
-            }
-            // 如果是 having 子句，添加聚合函数\AND\OR\NOT\IN\BETWEEN\LIKE\IS NULL\IS NOT NULL
-            if (currentClause === 'HAVING') {
-              suggestions.push(
-                  ...functions.map(func =>
-                      createCompletionItem(monaco, range, func, monaco.languages.CompletionItemKind.Function)
-                  )
-              );
-              suggestions.push(
-                  ...['AND', 'OR', 'NOT', 'IN', 'BETWEEN', 'LIKE', 'IS NULL', 'IS NOT NULL', 'ORDER BY']
-                      .map(keyword => ({
-                        label: keyword,
-                        kind: monaco.languages.CompletionItemKind.Keyword,
-                        insertText: keyword,
-                        range: range,
-                      }))
-              );
-            }
-            // 如果是 ORDER BY 子句，添加 ASC、DESC
-            if (currentClause === 'ORDER BY') {
-              suggestions.push(
-                  ...['ASC', 'DESC'].map(order => ({
-                    label: order,
-                    kind: monaco.languages.CompletionItemKind.Keyword,
-                    insertText: order,
-                    range: range,
-                  }))
-              );
-            }
-            break;
+            // 提供默认提示
+            return {
+              suggestions: [
+                ...SQLKeywords.map(keyword => createKeywordSuggestion(monaco, range, keyword)),
+                ...getTables().map(table => createTableSuggestion(monaco, range, table)),
+                ...functions.map(func => createFunctionSuggestion(monaco, range, func)),
+                ...getTables().flatMap(table => getColumnSuggestions(monaco, range, table.name))
+              ]
+            };
         }
-
-        // 提供 SQL 关键字提示
-        if (!canProvide) {
-          // 判断是否是 insert
-          if (textUntilPosition.toUpperCase().includes('INSERT INTO')) {
-            // 判读是否有表名，如果有表名则提示字段，用正则匹配表名
-            const matches = textUntilPosition.match(/INSERT INTO ([a-zA-Z0-9_]+)/i);
-            if (matches && matches[1]) {
-              const columns = getColumns(matches[1]);
-              suggestions.push(
-                  ...columns.map(column => {
-                        const columnItem = {...column, tableName: matches[1]};
-                        return createCompletionItem(monaco, range, columnItem, monaco.languages.CompletionItemKind.Field)
-                      }
-                  ));
-            } else {
-              // 提示表名，插入的内容为表名(字段1, 字段2, ...) VALUES ()
-              suggestions.push(...(getTables().map(table => ({
-                label: table.name,
-                kind: monaco.languages.CompletionItemKind.Class,
-                insertText: `${table.name}(${table.columns.map(col => col.name).join(', ')}) VALUES ()`,
-                range: range,
-                sortText: '0001'
-              }))));
-            }
-            return {suggestions};
-          }
-          // 判断是否是 update
-          if (textUntilPosition.toUpperCase().includes('UPDATE')) {
-            // 判断是否有表名，如果有表名则提示字段，用正则匹配表名
-            const matches = textUntilPosition.match(/UPDATE ([a-zA-Z0-9_]+)/i);
-            if (matches && matches[1]) {
-              const columns = getColumns(matches[1]);
-              suggestions.push(
-                  ...columns.map(column => {
-                        const columnItem = {...column, tableName: matches[1]};
-                        return createCompletionItem(monaco, range, columnItem, monaco.languages.CompletionItemKind.Field)
-                      }
-                  ));
-              // 如果不存在 SET 关键字，则提示 SET
-              if (!textUntilPosition.toUpperCase().includes('SET')) {
-                suggestions.push({
-                  label: 'SET',
-                  kind: monaco.languages.CompletionItemKind.Keyword,
-                  insertText: 'SET',
-                  range: range,
-                  sortText: '0000'
-                });
-              }
-              // 如果不存在 WHERE 关键字，则提示 WHERE
-              if (!textUntilPosition.toUpperCase().includes('WHERE')) {
-                suggestions.push({
-                  label: 'WHERE',
-                  kind: monaco.languages.CompletionItemKind.Keyword,
-                  insertText: 'WHERE',
-                  range: range,
-                  sortText: '0003'
-                });
-              }
-            } else {
-              // 提示表名
-              suggestions.push(...(getTables().map(table => ({
-                label: table.name,
-                kind: monaco.languages.CompletionItemKind.Class,
-                insertText: table.name,
-                range: range,
-                sortText: '0001'
-              }))));
-
-            }
-            // 如果当前光标位于 where 后，则提示 AND、OR、NOT、IN、BETWEEN、LIKE、IS NULL、IS NOT NULL
-            if (textUntilPosition.toUpperCase().includes('WHERE')) {
-              suggestions.push(
-                  ...['AND', 'OR', 'NOT', 'IN', 'BETWEEN', 'LIKE', 'IS NULL', 'IS NOT NULL']
-                      .map(keyword => ({
-                        label: keyword,
-                        kind: monaco.languages.CompletionItemKind.Keyword,
-                        insertText: keyword,
-                        range: range,
-                      }))
-              );
-            }
-            return {suggestions};
-          }
-          // 判断是否是 delete
-          if (textUntilPosition.toUpperCase().includes('DELETE')) {
-            // 判断是否有表名，如果有表名则提示字段，用正则匹配表名
-            const matches = textUntilPosition.match(/DELETE FROM ([a-zA-Z0-9_]+)/i);
-            if (matches && matches[1]) {
-              const columns = getColumns(matches[1]);
-              suggestions.push(
-                  ...columns.map(column => {
-                        const columnItem = {...column, tableName: matches[1]};
-                        return createCompletionItem(monaco, range, columnItem, monaco.languages.CompletionItemKind.Field)
-                      }
-                  ));
-              // 如果不存在 WHERE 关键字，则提示 WHERE
-              if (!textUntilPosition.toUpperCase().includes('WHERE')) {
-                suggestions.push({
-                  label: 'WHERE',
-                  kind: monaco.languages.CompletionItemKind.Keyword,
-                  insertText: 'WHERE',
-                  range: range,
-                  sortText: '0003'
-                });
-              }
-            } else {
-              // 判断是否有 FROM 关键字，如果没有则提示 FROM
-              if (!textUntilPosition.toUpperCase().includes('FROM')) {
-                suggestions.push({
-                  label: 'FROM',
-                  kind: monaco.languages.CompletionItemKind.Keyword,
-                  insertText: 'FROM',
-                  range: range,
-                  sortText: '0000'
-                });
-              }
-              // 提示表名
-              suggestions.push(...(getTables().map(table => ({
-                label: table.name,
-                kind: monaco.languages.CompletionItemKind.Class,
-                insertText: table.name,
-                range: range,
-                sortText: '0001'
-              }))));
-            }
-            return {suggestions};
-          }
-          suggestions.push(
-              ...SQLKeywords.map(keyword => ({
-                label: keyword,
-                kind: monaco.languages.CompletionItemKind.Keyword,
-                insertText: keyword,
-                range: range,
-              }))
-          );
-          // 提供表名提示
-          suggestions.push(
-              ...getTables().map(table =>
-                  createCompletionItem(monaco, range, table, monaco.languages.CompletionItemKind.Class)
-              )
-          );
-          // 提供聚合函数提示
-          suggestions.push(
-              ...functions.map(func =>
-                  createCompletionItem(monaco, range, func, monaco.languages.CompletionItemKind.Function)
-              )
-          );
-          // 提供字段提示，格式 table.column，无需别名
-          for (const table of getTables()) {
-            suggestions.push(
-                ...table.columns.map(column => {
-                      const columnItem = {...column, tableName: table.name};
-                      return createCompletionItem(monaco, range, columnItem, monaco.languages.CompletionItemKind.Field)
-                    }
-                )
-            );
-          }
-        }
-        return {suggestions};
       }
     });
   };
