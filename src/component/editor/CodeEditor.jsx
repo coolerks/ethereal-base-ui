@@ -7,6 +7,7 @@ import {SQLKeywords} from "./support/sql-keywords.js";
 
 function CodeEditor() {
   const [sql, setSql] = useState('');
+  const sqlRef = useRef('');
   const parser = useRef(new Parser());
   const editorRef = useRef(null);
   const [isLight, setIsLight] = useState(true);
@@ -60,7 +61,7 @@ function CodeEditor() {
   // 获取当前位置所在的SQL子句
   const getCurrentClause = (textUntilPosition) => {
     const upperText = textUntilPosition.toUpperCase();
-    if (!upperText.includes('SELECT')) return '';
+    if (!sqlRef.current.includes('SELECT')) return '';
 
     if (!upperText.includes('FROM')) return 'SELECT';
     if (!upperText.includes('WHERE') && !upperText.includes('GROUP BY') &&
@@ -120,6 +121,7 @@ function CodeEditor() {
   const handleEditorChange = (val) => {
     try {
       setSql(val);
+      sqlRef.current = val;
       const opt = {database: 'MySQL'};
       let preSql = val;
       if (val.trim().match(/(WHERE|LEFT JOIN|RIGHT JOIN|INNERR JOIN|JOIN|GROUP BY|ORDER BY)\s*$/i)) {
@@ -194,6 +196,8 @@ function CodeEditor() {
   // 获取字段提示
   const getColumnSuggestions = (monaco, range, tableName, alias = null) => {
     const columns = getColumns(tableName);
+    console.log('Columns:', columns);
+    console.log('Alias:', alias);
     return columns.map(column => {
       const suggestion = createColumnSuggestion(monaco, range, {...column, tableName});
       if (alias) {
@@ -426,6 +430,47 @@ function CodeEditor() {
         const word = model.getWordAtPosition(position);
         if (!word) return null;
 
+        const lineContent = model.getLineContent(position.lineNumber);
+        // textUntilPosition 为鼠标移动的位置之前的文本
+        const textUntilPosition = model.getValueInRange({
+          // startLineNumber: position.lineNumber,
+          startColumn: 1,
+          endLineNumber: position.lineNumber,
+          endColumn: position.column
+        });
+        const currentClause = getCurrentClause(textUntilPosition);
+        console.log('Current clause:', currentClause, 'word = ', word);
+        console.log('Line content:', lineContent);
+        console.log('Text until position:', textUntilPosition);
+        let statement = textUntilPosition
+        // 鼠标停留的 textUntilPosition 位置不一定是一个完整的单词，可能是部分单词，也可能是部分字母，所以按照字母数字下划线为为整体进行切片，所以需要判断是否以 word.word 结尾，如果不是，那么需要按照split切片找到 textUntilPosition 的最后一个单词
+        if (!lineContent.endsWith(word.word)) {
+          const words = textUntilPosition.split(/[^a-zA-Z0-9_]/);
+          console.log('Words:', words);
+          // 取最后一个单词
+          const w = words[words.length - 1];
+          // statement 根据word.word补全
+          const suffix = word.word.substring(w.length, word.word.length);
+          statement = statement + suffix;
+        }
+        console.log('Statement:', statement);
+
+        switch (currentClause) {
+          case 'SELECT':
+            // 检查当前单词是否是聚合函数
+            const func = functions.find(f => f.name.toLowerCase() === word.word.toLowerCase());
+            if (func) {
+              return {
+                contents: [
+                  {value: `**Function:** ${func.name}`},
+                  {value: `**Description:** ${func.doc}`},
+                  {value: `**Support:** ${func.support.join(', ')}`}
+                ]
+              };
+            }
+            break;
+        }
+
         // 检查当前单词是否是表名
         const table = getTables().find(t => t.name.toLowerCase() === word.word.toLowerCase());
         if (!table) return null;
@@ -518,8 +563,9 @@ function CodeEditor() {
         };
 
         const lineContent = model.getLineContent(position.lineNumber);
+        // 当前光标前的文本
         const textUntilPosition = model.getValueInRange({
-          startLineNumber: position.lineNumber,
+          // startLineNumber: position.lineNumber,
           startColumn: 1,
           endLineNumber: position.lineNumber,
           endColumn: position.column
@@ -556,6 +602,7 @@ function CodeEditor() {
           case 'GROUP BY':
           case 'HAVING':
           case 'ORDER BY':
+            console.log('Condition clause');
             return {suggestions: handleConditionClauseSuggestions(monaco, range, currentClause, usedTablesAndAliases)};
           default:
             // 判断是否是 DML 语句
