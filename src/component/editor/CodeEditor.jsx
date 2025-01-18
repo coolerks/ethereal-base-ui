@@ -297,136 +297,121 @@ function CodeEditor() {
     return suggestions;
   };
 
-  // 获取 insert into 的代码提示
+// 创建DML语句的表提示
+  const createDMLTableSuggestion = (monaco, range, table) => ({
+    label: table.name,
+    kind: monaco.languages.CompletionItemKind.Class,
+    insertText: table.name,
+    range,
+    sortText: '0001'
+  });
+
+// 创建带完整列信息的INSERT语句表提示
+  const createInsertTableSuggestion = (monaco, range, table) => ({
+    ...createDMLTableSuggestion(monaco, range, table),
+    insertText: `${table.name}(${table.columns.map(col => col.name).join(', ')}) VALUES ()`
+  });
+
+// 通用的WHERE子句关键字提示
+  const getWhereKeywords = (monaco, range) => {
+    const keywords = ['AND', 'OR', 'NOT', 'IN', 'BETWEEN', 'LIKE', 'IS NULL', 'IS NOT NULL'];
+    return keywords.map(keyword => createKeywordSuggestion(monaco, range, keyword));
+  };
+
+// 提取表名的工具函数
+  const extractTableName = (text, pattern) => {
+    const matches = text.match(pattern);
+    return matches ? matches[1] : null;
+  };
+
+// DML语句模式匹配
+  const DML_PATTERNS = {
+    INSERT: /INSERT INTO ([a-zA-Z0-9_]+)/i,
+    UPDATE: /UPDATE ([a-zA-Z0-9_]+)/i,
+    DELETE: /DELETE FROM ([a-zA-Z0-9_]+)/i
+  };
+
+// 获取 INSERT INTO 的代码提示
   const getInsertIntoSuggestions = (textUntilPosition, monaco, range) => {
-    const suggestions = [];
-    // 判读是否有表名，如果有表名则提示字段，用正则匹配表名
-    const matches = textUntilPosition.match(/INSERT INTO ([a-zA-Z0-9_]+)/i);
-    if (matches && matches[1]) {
-      const columns = getColumns(matches[1]);
-      suggestions.push(
-          ...columns.map(column => {
-                const columnItem = {...column, tableName: matches[1]};
-                return createColumnSuggestion(monaco, range, columnItem);
-              }
-          ));
-    } else {
-      // 提示表名，插入的内容为表名(字段1, 字段2, ...) VALUES ()
-      suggestions.push(...(getTables().map(table => ({
-        label: table.name,
-        kind: monaco.languages.CompletionItemKind.Class,
-        insertText: `${table.name}(${table.columns.map(col => col.name).join(', ')}) VALUES ()`,
-        range: range,
-        sortText: '0001'
-      }))));
-    }
-    return {suggestions};
-  }
+    const tableName = extractTableName(textUntilPosition, DML_PATTERNS.INSERT);
 
-  // 获取 update 的代码提示
+    if (tableName) {
+      // 有表名时提示字段
+      return {
+        suggestions: getColumns(tableName).map(column =>
+            createColumnSuggestion(monaco, range, {...column, tableName})
+        )
+      };
+    }
+
+    // 无表名时提示完整INSERT语句结构
+    return {
+      suggestions: getTables().map(table => createInsertTableSuggestion(monaco, range, table))
+    };
+  };
+
+// 获取 UPDATE 的代码提示
   const getUpdateSuggestions = (textUntilPosition, monaco, range) => {
+    const tableName = extractTableName(textUntilPosition, DML_PATTERNS.UPDATE);
     const suggestions = [];
-    // 判断是否有表名，如果有表名则提示字段，用正则匹配表名
-    const matches = textUntilPosition.match(/UPDATE ([a-zA-Z0-9_]+)/i);
-    if (matches && matches[1]) {
-      const columns = getColumns(matches[1]);
-      suggestions.push(
-          ...columns.map(column => {
-                const columnItem = {...column, tableName: matches[1]};
-                return createColumnSuggestion(monaco, range, columnItem);
-              }
-          ));
-      // 如果不存在 SET 关键字，则提示 SET
-      if (!textUntilPosition.toUpperCase().includes('SET')) {
-        suggestions.push({
-          label: 'SET',
-          kind: monaco.languages.CompletionItemKind.Keyword,
-          insertText: 'SET',
-          range: range,
-          sortText: '0000'
-        });
-      }
-      // 如果不存在 WHERE 关键字，则提示 WHERE
-      if (!textUntilPosition.toUpperCase().includes('WHERE')) {
-        suggestions.push({
-          label: 'WHERE',
-          kind: monaco.languages.CompletionItemKind.Keyword,
-          insertText: 'WHERE',
-          range: range,
-          sortText: '0003'
-        });
-      }
-    } else {
-      // 提示表名
-      suggestions.push(...(getTables().map(table => ({
-        label: table.name,
-        kind: monaco.languages.CompletionItemKind.Class,
-        insertText: table.name,
-        range: range,
-        sortText: '0001'
-      }))));
 
-    }
-    // 如果当前光标位于 where 后，则提示 AND、OR、NOT、IN、BETWEEN、LIKE、IS NULL、IS NOT NULL
-    if (textUntilPosition.toUpperCase().includes('WHERE')) {
+    if (tableName) {
+      // 有表名时的提示
       suggestions.push(
-          ...['AND', 'OR', 'NOT', 'IN', 'BETWEEN', 'LIKE', 'IS NULL', 'IS NOT NULL']
-              .map(keyword => ({
-                label: keyword,
-                kind: monaco.languages.CompletionItemKind.Keyword,
-                insertText: keyword,
-                range: range,
-              }))
+          ...getColumns(tableName).map(column =>
+              createColumnSuggestion(monaco, range, {...column, tableName})
+          )
       );
-    }
-    return {suggestions};
-  }
 
-  // 获取 delete 的代码提示
-  const getDeleteSuggestions = (textUntilPosition, monaco, range) => {
-    const suggestions = [];
-    // 判断是否有表名，如果有表名则提示字段，用正则匹配表名
-    const matches = textUntilPosition.match(/DELETE FROM ([a-zA-Z0-9_]+)/i);
-    if (matches && matches[1]) {
-      const columns = getColumns(matches[1]);
-      suggestions.push(
-          ...columns.map(column => {
-                const columnItem = {...column, tableName: matches[1]};
-                return createColumnSuggestion(monaco, range, columnItem);
-              }
-          ));
-      // 如果不存在 WHERE 关键字，则提示 WHERE
-      if (!textUntilPosition.toUpperCase().includes('WHERE')) {
-        suggestions.push({
-          label: 'WHERE',
-          kind: monaco.languages.CompletionItemKind.Keyword,
-          insertText: 'WHERE',
-          range: range,
-          sortText: '0003'
-        });
+      // 添加SET和WHERE关键字提示
+      const uppercaseText = textUntilPosition.toUpperCase();
+      if (!uppercaseText.includes('SET')) {
+        suggestions.push(createKeywordSuggestion(monaco, range, 'SET'));
+      }
+      if (!uppercaseText.includes('WHERE')) {
+        suggestions.push(createKeywordSuggestion(monaco, range, 'WHERE'));
       }
     } else {
-      // 判断是否有 FROM 关键字，如果没有则提示 FROM
-      if (!textUntilPosition.toUpperCase().includes('FROM')) {
-        suggestions.push({
-          label: 'FROM',
-          kind: monaco.languages.CompletionItemKind.Keyword,
-          insertText: 'FROM',
-          range: range,
-          sortText: '0000'
-        });
-      }
-      // 提示表名
-      suggestions.push(...(getTables().map(table => ({
-        label: table.name,
-        kind: monaco.languages.CompletionItemKind.Class,
-        insertText: table.name,
-        range: range,
-        sortText: '0001'
-      }))));
+      // 无表名时提示表
+      suggestions.push(...getTables().map(table => createDMLTableSuggestion(monaco, range, table)));
     }
-    return {suggestions};
-  }
+
+    // WHERE子句的条件关键字提示
+    if (textUntilPosition.toUpperCase().includes('WHERE')) {
+      suggestions.push(...getWhereKeywords(monaco, range));
+    }
+
+    return { suggestions };
+  };
+
+// 获取 DELETE 的代码提示
+  const getDeleteSuggestions = (textUntilPosition, monaco, range) => {
+    const tableName = extractTableName(textUntilPosition, DML_PATTERNS.DELETE);
+    const suggestions = [];
+
+    if (tableName) {
+      // 有表名时的提示
+      suggestions.push(
+          ...getColumns(tableName).map(column =>
+              createColumnSuggestion(monaco, range, {...column, tableName})
+          )
+      );
+
+      // 添加WHERE关键字提示
+      if (!textUntilPosition.toUpperCase().includes('WHERE')) {
+        suggestions.push(createKeywordSuggestion(monaco, range, 'WHERE'));
+      }
+    } else {
+      // 无表名时的提示
+      const uppercaseText = textUntilPosition.toUpperCase();
+      if (!uppercaseText.includes('FROM')) {
+        suggestions.push(createKeywordSuggestion(monaco, range, 'FROM'));
+      }
+      suggestions.push(...getTables().map(table => createDMLTableSuggestion(monaco, range, table)));
+    }
+
+    return { suggestions };
+  };
 
   const editorDidMount = (editor, monaco) => {
     editorRef.current = editor;
@@ -483,11 +468,14 @@ function CodeEditor() {
           case 'ORDER BY':
             return {suggestions: handleConditionClauseSuggestions(monaco, range, currentClause, usedTablesAndAliases)};
           default:
+            // 判断是否是 DML 语句
             if (textUntilPosition.toUpperCase().includes('INSERT INTO')) {
               return getInsertIntoSuggestions(textUntilPosition, monaco, range);
-            } else if (textUntilPosition.toUpperCase().includes('UPDATE')) {
+            }
+            if (textUntilPosition.toUpperCase().includes('UPDATE')) {
               return getUpdateSuggestions(textUntilPosition, monaco, range);
-            } else if (textUntilPosition.toUpperCase().includes('DELETE')) {
+            }
+            if (textUntilPosition.toUpperCase().includes('DELETE')) {
               return getDeleteSuggestions(textUntilPosition, monaco, range);
             }
 
