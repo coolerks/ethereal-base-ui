@@ -12,8 +12,155 @@ function CodeEditor() {
   const editorRef = useRef(null);
   const [isLight, setIsLight] = useState(true);
   const ast = useRef(null);
+  const decorationsCollection = useRef(null);
+
   // 添加装饰器以显示可点击的表名
   const decorations = useRef([]);
+
+
+  // Function to identify SQL statement starts
+  const findSQLStatements = (model) => {
+    const lineCount = model.getLineCount();
+    const statements = new Set();
+    let inCTE = false;
+    let cteStartLine = -1;
+    let parenCount = 0;
+    
+    for (let lineNumber = 1; lineNumber <= lineCount; lineNumber++) {
+      const lineContent = model.getLineContent(lineNumber).trim();
+      const upperLine = lineContent.toUpperCase();
+      
+      // 跳过空行和注释
+      if (!lineContent || lineContent.startsWith('--') || lineContent.startsWith('/*')) {
+        continue;
+      }
+      
+      // 计数括号以跟踪 CTE 和子查询结构
+      for (const char of lineContent) {
+        if (char === '(') parenCount++;
+        if (char === ')') parenCount--;
+      }
+      
+      // 检查 CTE 开始
+      if (upperLine.startsWith('WITH ') && parenCount === 0) {
+        inCTE = true;
+        cteStartLine = lineNumber;
+        statements.add(lineNumber); // 添加 WITH 开始的行
+        continue;
+      }
+      
+      // 检查独立的 SQL 语句（非 CTE 部分）
+      if (!inCTE && parenCount === 0 && (
+        upperLine.startsWith('SELECT') ||
+        upperLine.startsWith('INSERT') ||
+        upperLine.startsWith('UPDATE') ||
+        upperLine.startsWith('DELETE') ||
+        upperLine.startsWith('CREATE') ||
+        upperLine.startsWith('ALTER') ||
+        upperLine.startsWith('DROP')
+      )) {
+        statements.add(lineNumber);
+      }
+      
+      // 语句结束时重置 CTE 标志
+      if (lineContent.endsWith(';')) {
+        inCTE = false;
+        cteStartLine = -1;
+        parenCount = 0;
+      }
+    }
+    
+    return Array.from(statements);
+  };
+
+  const handleRunButtonClick = (editor, lineNumber) => {
+    const model = editor.getModel();
+    if (!model) return;
+
+    let startLine = lineNumber;
+    let endLine = lineNumber;
+    const lineCount = model.getLineCount();
+    let parenCount = 0;
+
+    // 向上搜索 CTE 开始位置
+    for (let i = lineNumber; i >= 1; i--) {
+      const lineContent = model.getLineContent(i).trim().toUpperCase();
+      if (lineContent.startsWith('WITH ')) {
+        startLine = i;
+        break;
+      }
+    }
+
+    // 向下搜索语句结束位置
+    for (let i = lineNumber; i <= lineCount; i++) {
+      const lineContent = model.getLineContent(i);
+
+      // 计数括号
+      for (const char of lineContent) {
+        if (char === '(') parenCount++;
+        if (char === ')') parenCount--;
+      }
+
+      // 检查语句结束
+      if (lineContent.includes(';') && parenCount === 0) {
+        endLine = i;
+        break;
+      }
+    }
+
+    // 获取完整的 SQL 语句
+    const sql = model.getValueInRange({
+      startLineNumber: startLine,
+      startColumn: 1,
+      endLineNumber: endLine,
+      endColumn: model.getLineMaxColumn(endLine)
+    });
+
+    console.log('Running SQL:', sql);
+    // 添加你的 SQL 执行逻辑
+  };
+
+
+
+  // Function to update run button decorations
+  // Function to update run button decorations
+  const updateRunButtons = (editor, monaco) => {
+    if (!editor || !monaco) return;
+
+    const model = editor.getModel();
+    if (!model) return;
+
+    // Clear existing decorations
+    if (decorationsCollection.current) {
+      decorationsCollection.current.clear();
+    }
+
+    const statementLines = findSQLStatements(model);
+
+    // Create new decorations collection if not exists
+    if (!decorationsCollection.current) {
+      decorationsCollection.current = editor.createDecorationsCollection();
+    }
+
+    // Add new decorations
+    const newDecorations = statementLines.map(line => ({
+      range: {
+        startLineNumber: line,
+        startColumn: 1,
+        endLineNumber: line,
+        endColumn: 1
+      },
+      options: {
+        isWholeLine: false,
+        glyphMarginClassName: 'sql-run-button',
+        glyphMarginHoverMessage: { value: 'Run this SQL statement' }
+      }
+    }));
+
+    decorationsCollection.current.set(newDecorations);
+  };
+
+
 
   // 获取当前数据库模式下的所有表
   const getTables = () => {
@@ -423,6 +570,30 @@ function CodeEditor() {
   const editorDidMount = (editor, monaco) => {
     editorRef.current = editor;
 
+    // Enable glyph margin
+    editor.updateOptions({
+      glyphMargin: true,
+      lineNumbers: true,
+    });
+
+    // Initial update of run buttons
+    updateRunButtons(editor, monaco);
+
+    // Update run buttons when content changes
+    editor.onDidChangeModelContent(() => {
+      updateRunButtons(editor, monaco);
+    });
+
+    // Handle glyph margin clicks
+    editor.onMouseDown((e) => {
+      if (e.target.type === monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN) {
+        handleRunButtonClick(editor, e.target.position.lineNumber);
+      }
+    });
+
+
+
+
 
     // 注册hover提供器
     monaco.languages.registerHoverProvider('sql', {
@@ -636,6 +807,15 @@ function CodeEditor() {
         <p>{JSON.stringify(ast)}</p>
         <style>
           {`
+            .sql-run-button {
+            background-color: #4b4b4b;
+            -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16'%3E%3Cpath fill='currentColor' d='M4 2v12l8-6z'/%3E%3C/svg%3E") no-repeat 50% 50%;
+            mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16'%3E%3Cpath fill='currentColor' d='M4 2v12l8-6z'/%3E%3C/svg%3E") no-repeat 50% 50%;
+            cursor: pointer;
+            width: 16px;
+            height: 16px;
+            margin-left: 5px;
+          }
           .clickableTable {
             cursor: pointer;
             color: rgb(${isLight ? '182, 38, 292' : '234, 51, 247'});      
@@ -656,7 +836,9 @@ function CodeEditor() {
                 snippetsPreventQuickSuggestions: false,
                 showKeywords: true,
                 showSnippets: true
-              }
+              },
+              glyphMargin: true,
+              lineNumbers: true,
             }}
             height="90vh"
             theme={isLight ? 'light' : 'vs-dark'}
