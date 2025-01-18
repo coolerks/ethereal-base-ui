@@ -11,6 +11,8 @@ function CodeEditor() {
   const editorRef = useRef(null);
   const [isLight, setIsLight] = useState(true);
   const ast = useRef(null);
+  // 添加装饰器以显示可点击的表名
+  const decorations = useRef([]);
 
   // 获取当前数据库模式下的所有表
   const getTables = () => {
@@ -45,6 +47,7 @@ function CodeEditor() {
     return tableRef ? tableRef.table : null;
   };
 
+  // 获取当前位置已使用的表名和别名
   const getUsedTablesAndAliases = () => {
     if (!ast.current?.from) return new Map();
 
@@ -167,7 +170,7 @@ function CodeEditor() {
     }
   });
 
-  // 创建函数提示项
+  // 创建聚合函数提示项
   const createFunctionSuggestion = (monaco, range, item) => ({
     ...createBaseSuggestion(monaco, range, item, monaco.languages.CompletionItemKind.Function),
     detail: `Function: ${item.name}`,
@@ -381,7 +384,7 @@ function CodeEditor() {
       suggestions.push(...getWhereKeywords(monaco, range));
     }
 
-    return { suggestions };
+    return {suggestions};
   };
 
 // 获取 DELETE 的代码提示
@@ -410,11 +413,98 @@ function CodeEditor() {
       suggestions.push(...getTables().map(table => createDMLTableSuggestion(monaco, range, table)));
     }
 
-    return { suggestions };
+    return {suggestions};
   };
 
   const editorDidMount = (editor, monaco) => {
     editorRef.current = editor;
+
+
+    // 注册hover提供器
+    monaco.languages.registerHoverProvider('sql', {
+      provideHover: (model, position) => {
+        const word = model.getWordAtPosition(position);
+        if (!word) return null;
+
+        // 检查当前单词是否是表名
+        const table = getTables().find(t => t.name.toLowerCase() === word.word.toLowerCase());
+        if (!table) return null;
+
+        // 返回hover内容
+        return {
+          contents: [
+            {value: `**Table:** ${table.name}`},
+            {value: `**Description:** ${table.comment || 'No description available'}`},
+            // 字段，以及字段的数据类型、是否允许为空、默认值，表格展示
+            {value: `**Columns:** \n\n | Name | Type | Nullable | Default |\n | --- | --- | --- | --- |\n | ${table.columns.map(col => `${col.name} | ${col.dataType} | ${col.nullable ? 'true' : 'false'} | ${col.defaultValue || 'null'}`).join('\n | ')} |`},
+            {value: '```sql\n' + table.ddl + '\n```'}
+          ]
+        };
+      }
+    });
+
+    editor.onMouseDown((e) => {
+      const isMac = navigator.userAgentData.platform.includes("mac");
+      // 检查是否按下ctrl键，mac上是command键
+      if (((isMac ? e.event.metaKey : e.event.ctrlKey)) && e.target.type === monaco.editor.MouseTargetType.CONTENT_TEXT) {
+        const position = {
+          lineNumber: e.target.position.lineNumber,
+          column: e.target.position.column
+        };
+
+        const word = editor.getModel().getWordAtPosition(position);
+        if (!word) return;
+
+        // 检查是否点击的是表名
+        const table = getTables().find(t => t.name.toLowerCase() === word.word.toLowerCase());
+        if (table) {
+          alert(`Clicked table: ${table.name}`);
+        }
+      }
+    });
+
+
+    // 更新装饰器的函数
+    const updateDecorations = () => {
+      const model = editor.getModel();
+      if (!model) return;
+
+      const tableNames = getTables().map(t => t.name.toLowerCase());
+      const text = model.getValue();
+      const newDecorations = [];
+
+      // 为所有表名添加装饰器
+      tableNames.forEach(tableName => {
+        const matches = text.matchAll(new RegExp(`\\b${tableName}\\b`, 'gi'));
+        for (const match of matches) {
+          const startPos = model.getPositionAt(match.index);
+          const endPos = model.getPositionAt(match.index + tableName.length);
+
+          newDecorations.push({
+            range: new monaco.Range(
+                startPos.lineNumber,
+                startPos.column,
+                endPos.lineNumber,
+                endPos.column
+            ),
+            options: {
+              inlineClassName: 'clickableTable',
+              hoverMessage: {value: '按下Ctrl(⌘)键点击表名即可查看信息'}
+            }
+          });
+        }
+      });
+
+      decorations.current = editor.deltaDecorations(decorations.current, newDecorations);
+    };
+
+    // 监听编辑器内容变化，更新装饰器
+    editor.onDidChangeModelContent(() => {
+      updateDecorations();
+    });
+
+    // 初始化装饰器
+    updateDecorations();
 
     monaco.languages.registerCompletionItemProvider('sql', {
       triggerCharacters: ['.', ' '],
@@ -497,6 +587,19 @@ function CodeEditor() {
       <>
         <p>{sql}</p>
         <p>{JSON.stringify(ast)}</p>
+        <style>
+          {`
+          .clickableTable {
+            cursor: pointer;
+            color: rgb(182, 38, 292);
+          }
+          .clickableTable:hover {
+            opacity: 0.8;
+            text-decoration: underline;
+            color: rgb(0, 0, 255);
+          }
+        `}
+        </style>
         <Editor
             onMount={editorDidMount}
             onChange={handleEditorChange}
