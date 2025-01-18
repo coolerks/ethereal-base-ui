@@ -638,12 +638,12 @@ function CodeEditor() {
           {`
           .clickableTable {
             cursor: pointer;
-            color: rgb(182, 38, 292);
+            color: rgb(${isLight ? '182, 38, 292' : '234, 51, 247'});      
           }
           .clickableTable:hover {
             opacity: 0.8;
             text-decoration: underline;
-            color: rgb(0, 0, 255);
+            color: rgb(${isLight ? '0, 0, 255' : '234, 51, 227'});
           }
         `}
         </style>
