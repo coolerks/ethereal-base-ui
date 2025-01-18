@@ -3,6 +3,7 @@ import {Editor} from "@monaco-editor/react";
 import {Parser} from "node-sql-parser";
 import {databases} from "./support/schema.js";
 import {functions} from "./support/aggregate-functions.js";
+import {SQLKeywords} from "./support/sql-keywords.js";
 
 function CodeEditor() {
   const [sql, setSql] = useState('');
@@ -10,21 +11,6 @@ function CodeEditor() {
   const editorRef = useRef(null);
   const [isLight, setIsLight] = useState(true);
   const ast = useRef(null);
-
-  // SQL 关键字列表
-  const SQLKeywords = [
-    "SELECT", "FROM", "WHERE", "INSERT INTO", "UPDATE", "DELETE", "CREATE", "DROP", "ALTER", "TABLE", "DATABASE", "INDEX",
-    "GROUP BY", "ORDER BY", "HAVING", "JOIN", "LEFT JOIN", "RIGHT JOIN", "INNER JOIN", "LIMIT", "OFFSET", "UNION",
-    "AND", "OR", "NOT", "IN", "BETWEEN", "LIKE", "IS NULL", "IS NOT NULL", "INTO", "SET", "VALUES", "AS", "ON", "USING",
-    "PRIMARY KEY", "FOREIGN KEY", "REFERENCES", "UNIQUE", "CHECK", "DEFAULT", "AUTO_INCREMENT", "CHAR", "VARCHAR",
-    "TEXT", "INT", "INTEGER", "BIGINT", "FLOAT", "DOUBLE", "DECIMAL", "DATE", "TIME", "TIMESTAMP", "YEAR", "ENUM",
-    "BOOLEAN", "BIT", "BLOB", "JSON", "NULL", "TRUE", "FALSE", "CASE", "WHEN", "THEN", "ELSE", "END", "WHILE", "DO",
-    "BEGIN", "IF", "ELSIF", "END IF", "LOOP", "EXIT", "CONTINUE", "RETURN", "RETURNS", "FUNCTION", "PROCEDURE", "CALL",
-    "TRIGGER", "EVENT", "REPLACE", "GRANT", "REVOKE", "PRIVILEGES", "ALL", "ANY", "SOME", "TO", "WITH", "OPTION",
-    "SESSION", "SYSTEM", "GRANTED", "IDENTIFIED", "BY", "PASSWORD", "ADMIN", "RESOURCE", "ROLE", "ROLES", "VIEW",
-    "SCHEMA", "USER", "USERS", "GROUP", "COLUMN", "COLUMNS", "INDEXES", "VIEWS", "FUNCTIONS", "PROCEDURES", "TRIGGERS",
-    "PRIVILEGE", "EXECUTE", "ORDER", "LEFT", "RIGHT", "INNER", "OUTER", "FULL", "CROSS", "NATURAL", "IS"
-  ];
 
   // 获取当前数据库模式下的所有表
   const getTables = () => {
