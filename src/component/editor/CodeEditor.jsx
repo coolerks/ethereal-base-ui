@@ -688,12 +688,16 @@ function CodeEditor() {
         }
 
         // 检查是否是限定字段名 (table.field 或 alias.field)
-        const dotPosition = position.column - word.word.length - 1;
-        if (dotPosition > 0) {
-          const charBeforeWord = lineContent.charAt(dotPosition - 1);
-          if (charBeforeWord === '.') {
+        // Monaco position.column is 1-indexed, convert to 0-indexed for calculation
+        const endColumn = position.column - 1;
+        const startColumn = endColumn - word.word.length + 1;
+        const dotPosition = startColumn - 1;
+        
+        if (dotPosition >= 0 && dotPosition < lineContent.length) {
+          const charAtDot = lineContent.charAt(dotPosition);
+          if (charAtDot === '.') {
             // 获取表名或别名
-            const beforeDot = lineContent.substring(0, dotPosition - 1);
+            const beforeDot = lineContent.substring(0, dotPosition);
             const tableOrAliasMatch = beforeDot.match(/([a-zA-Z0-9_]+)$/);
             if (tableOrAliasMatch) {
               const tableOrAlias = tableOrAliasMatch[1];
