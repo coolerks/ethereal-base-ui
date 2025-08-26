@@ -355,12 +355,14 @@ function CodeEditor() {
   // 创建聚合函数提示项
   const createFunctionSuggestion = (monaco, range, item) => ({
     ...createBaseSuggestion(monaco, range, item, monaco.languages.CompletionItemKind.Function),
-    detail: `Function: ${item.name}`,
+    detail: `${item.category ? `[${item.category}] ` : ''}Function: ${item.name}`,
     documentation: {
       value: [
-        `**Description**: ${item.doc}\n`,
-        `**Support**: ${item.support.join(', ')}`
-      ].join('\n')
+        `**Function**: ${item.name}`,
+        item.category ? `**Category**: ${item.category}` : '',
+        `**Description**:\n${item.doc}`,
+        `**Database Support**: ${item.support.join(', ')}`
+      ].filter(Boolean).join('\n\n')
     },
     sortText: '9999'
   });
@@ -658,9 +660,9 @@ function CodeEditor() {
             if (func) {
               return {
                 contents: [
-                  {value: `**Function:** ${func.name}`},
-                  {value: `**Description:** ${func.doc}`},
-                  {value: `**Support:** ${func.support.join(', ')}`}
+                  {value: `**Function:** ${func.name} ${func.category ? `[${func.category}]` : ''}`},
+                  {value: `**Description:**\n${func.doc}`},
+                  {value: `**Database Support:** ${func.support.join(', ')}`}
                 ]
               };
             }
