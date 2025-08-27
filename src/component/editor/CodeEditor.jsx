@@ -688,44 +688,52 @@ function CodeEditor() {
         }
 
         // 检查是否是限定字段名 (table.field 或 alias.field)
-        // Monaco position.column is 1-indexed, convert to 0-indexed for calculation
-        const endColumn = position.column - 1;
-        const startColumn = endColumn - word.word.length + 1;
-        const dotPosition = startColumn - 1;
+        // 更健壮的限定字段检测 - 扫描当前光标周围寻找完整的限定标识符
+        const cursorColumn = position.column - 1; // Convert to 0-indexed
         
-        if (dotPosition >= 0 && dotPosition < lineContent.length) {
-          const charAtDot = lineContent.charAt(dotPosition);
-          if (charAtDot === '.') {
-            // 获取表名或别名
-            const beforeDot = lineContent.substring(0, dotPosition);
-            const tableOrAliasMatch = beforeDot.match(/([a-zA-Z0-9_]+)$/);
-            if (tableOrAliasMatch) {
-              const tableOrAlias = tableOrAliasMatch[1];
-              // 尝试从别名解析表名
-              let tableName = getTableFromAlias(tableOrAlias);
-              if (!tableName) {
-                // 如果不是别名，检查是否是直接的表名
-                const table = getTables().find(t => t.name.toLowerCase() === tableOrAlias.toLowerCase());
-                if (table) {
-                  tableName = table.name;
-                }
-              }
-              
-              if (tableName) {
-                const fieldInfo = getColumnFromTable(tableName, word.word);
-                if (fieldInfo) {
-                  return {
-                    contents: [
-                      {value: `**Field:** ${fieldInfo.column.name}`},
-                      {value: `**Table:** ${fieldInfo.table.name}`},
-                      {value: `**Description:** ${fieldInfo.column.comment || 'No description available'}`},
-                      {value: `**Type:** ${fieldInfo.column.dataType}`},
-                      {value: `**Nullable:** ${fieldInfo.column.nullable ? 'Yes' : 'No'}`},
-                      {value: `**Default Value:** ${fieldInfo.column.defaultValue || 'null'}`}
-                    ]
-                  };
-                }
-              }
+        // 扫描光标左侧寻找标识符开始位置
+        let identifierStart = cursorColumn;
+        while (identifierStart > 0 && /[a-zA-Z0-9_.]/.test(lineContent.charAt(identifierStart - 1))) {
+          identifierStart--;
+        }
+        
+        // 扫描光标右侧寻找标识符结束位置
+        let identifierEnd = cursorColumn;
+        while (identifierEnd < lineContent.length && /[a-zA-Z0-9_.]/.test(lineContent.charAt(identifierEnd))) {
+          identifierEnd++;
+        }
+        
+        // 提取完整的标识符
+        const fullIdentifier = lineContent.substring(identifierStart, identifierEnd);
+        
+        // 检查是否是限定字段名 (table.field)
+        const qualifiedMatch = fullIdentifier.match(/^([a-zA-Z0-9_]+)\.([a-zA-Z0-9_]+)$/);
+        if (qualifiedMatch) {
+          const [, tableOrAlias, fieldName] = qualifiedMatch;
+          
+          // 尝试从别名解析表名
+          let tableName = getTableFromAlias(tableOrAlias);
+          if (!tableName) {
+            // 如果不是别名，检查是否是直接的表名
+            const table = getTables().find(t => t.name.toLowerCase() === tableOrAlias.toLowerCase());
+            if (table) {
+              tableName = table.name;
+            }
+          }
+          
+          if (tableName) {
+            const fieldInfo = getColumnFromTable(tableName, fieldName);
+            if (fieldInfo) {
+              return {
+                contents: [
+                  {value: `**Field:** ${fieldInfo.column.name}`},
+                  {value: `**Table:** ${fieldInfo.table.name}`},
+                  {value: `**Description:** ${fieldInfo.column.comment || 'No description available'}`},
+                  {value: `**Type:** ${fieldInfo.column.dataType}`},
+                  {value: `**Nullable:** ${fieldInfo.column.nullable ? 'Yes' : 'No'}`},
+                  {value: `**Default Value:** ${fieldInfo.column.defaultValue || 'null'}`}
+                ]
+              };
             }
           }
         }
