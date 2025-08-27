@@ -201,6 +201,40 @@ function CodeEditor() {
     return tableRef ? tableRef.table : null;
   };
 
+  // 根据字段名查找所有包含该字段的表
+  const getTablesWithColumn = (columnName) => {
+    const tablesWithColumn = [];
+    for (const db of databases) {
+      for (const table of db.tables) {
+        const column = table.columns.find(col => col.name.toLowerCase() === columnName.toLowerCase());
+        if (column) {
+          tablesWithColumn.push({
+            table: table,
+            column: {...column, tableName: table.name}
+          });
+        }
+      }
+    }
+    return tablesWithColumn;
+  };
+
+  // 从指定表中获取字段信息
+  const getColumnFromTable = (tableName, columnName) => {
+    for (const db of databases) {
+      const table = db.tables.find(t => t.name.toLowerCase() === tableName.toLowerCase());
+      if (table) {
+        const column = table.columns.find(col => col.name.toLowerCase() === columnName.toLowerCase());
+        if (column) {
+          return {
+            table: table,
+            column: {...column, tableName: table.name}
+          };
+        }
+      }
+    }
+    return null;
+  };
+
   // 获取当前位置已使用的表名和别名
   const getUsedTablesAndAliases = () => {
     if (ast.current && ast.current.length) {
@@ -653,6 +687,57 @@ function CodeEditor() {
           statement = statement + suffix;
         }
 
+        // 检查是否是限定字段名 (table.field 或 alias.field)
+        // 更健壮的限定字段检测 - 扫描当前光标周围寻找完整的限定标识符
+        const cursorColumn = position.column - 1; // Convert to 0-indexed
+        
+        // 扫描光标左侧寻找标识符开始位置
+        let identifierStart = cursorColumn;
+        while (identifierStart > 0 && /[a-zA-Z0-9_.]/.test(lineContent.charAt(identifierStart - 1))) {
+          identifierStart--;
+        }
+        
+        // 扫描光标右侧寻找标识符结束位置
+        let identifierEnd = cursorColumn;
+        while (identifierEnd < lineContent.length && /[a-zA-Z0-9_.]/.test(lineContent.charAt(identifierEnd))) {
+          identifierEnd++;
+        }
+        
+        // 提取完整的标识符
+        const fullIdentifier = lineContent.substring(identifierStart, identifierEnd);
+        
+        // 检查是否是限定字段名 (table.field)
+        const qualifiedMatch = fullIdentifier.match(/^([a-zA-Z0-9_]+)\.([a-zA-Z0-9_]+)$/);
+        if (qualifiedMatch) {
+          const [, tableOrAlias, fieldName] = qualifiedMatch;
+          
+          // 尝试从别名解析表名
+          let tableName = getTableFromAlias(tableOrAlias);
+          if (!tableName) {
+            // 如果不是别名，检查是否是直接的表名
+            const table = getTables().find(t => t.name.toLowerCase() === tableOrAlias.toLowerCase());
+            if (table) {
+              tableName = table.name;
+            }
+          }
+          
+          if (tableName) {
+            const fieldInfo = getColumnFromTable(tableName, fieldName);
+            if (fieldInfo) {
+              return {
+                contents: [
+                  {value: `**Field:** ${fieldInfo.column.name}`},
+                  {value: `**Table:** ${fieldInfo.table.name}`},
+                  {value: `**Description:** ${fieldInfo.column.comment || 'No description available'}`},
+                  {value: `**Type:** ${fieldInfo.column.dataType}`},
+                  {value: `**Nullable:** ${fieldInfo.column.nullable ? 'Yes' : 'No'}`},
+                  {value: `**Default Value:** ${fieldInfo.column.defaultValue || 'null'}`}
+                ]
+              };
+            }
+          }
+        }
+
         switch (currentClause) {
           case 'SELECT':
             // 检查当前单词是否是聚合函数
@@ -667,6 +752,48 @@ function CodeEditor() {
               };
             }
             break;
+        }
+
+        // 检查当前单词是否是字段名（未限定的字段）
+        const tablesWithColumn = getTablesWithColumn(word.word);
+        if (tablesWithColumn.length > 0) {
+          // 如果有可用的 AST 信息，优先使用 FROM 子句中的表
+          const usedTablesAndAliases = getUsedTablesAndAliases();
+          const contextualField = tablesWithColumn.find(item => {
+            for (const [alias, tableName] of usedTablesAndAliases) {
+              if (item.table.name.toLowerCase() === tableName.toLowerCase()) {
+                return true;
+              }
+            }
+            return false;
+          });
+
+          const fieldInfo = contextualField || tablesWithColumn[0];
+          
+          if (tablesWithColumn.length > 1 && !contextualField) {
+            // 多个表包含该字段，显示所有可能的表
+            return {
+              contents: [
+                {value: `**Field:** ${word.word}`},
+                {value: `**Found in multiple tables:**`},
+                ...tablesWithColumn.map(item => ({
+                  value: `• **${item.table.name}**: ${item.column.dataType} - ${item.column.comment || 'No description'}`
+                })),
+                {value: `\n**Tip:** Use qualified name like \`table.${word.word}\` to specify which table.`}
+              ]
+            };
+          } else {
+            return {
+              contents: [
+                {value: `**Field:** ${fieldInfo.column.name}`},
+                {value: `**Table:** ${fieldInfo.table.name}`},
+                {value: `**Description:** ${fieldInfo.column.comment || 'No description available'}`},
+                {value: `**Type:** ${fieldInfo.column.dataType}`},
+                {value: `**Nullable:** ${fieldInfo.column.nullable ? 'Yes' : 'No'}`},
+                {value: `**Default Value:** ${fieldInfo.column.defaultValue || 'null'}`}
+              ]
+            };
+          }
         }
 
         // 检查当前单词是否是表名
