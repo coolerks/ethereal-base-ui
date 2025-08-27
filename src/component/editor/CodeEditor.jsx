@@ -634,6 +634,87 @@ function CodeEditor() {
     return {suggestions};
   };
 
+  // 解析SELECT子句中的字段别名
+  const parseSelectFieldAliases = (statement) => {
+    const aliases = [];
+    
+    try {
+      // 提取SELECT子句部分
+      const upperStatement = statement.toUpperCase();
+      const selectIndex = upperStatement.indexOf('SELECT');
+      const fromIndex = upperStatement.indexOf('FROM');
+      
+      if (selectIndex === -1 || fromIndex === -1 || fromIndex <= selectIndex) {
+        return aliases;
+      }
+      
+      const selectClause = statement.substring(selectIndex + 6, fromIndex).trim();
+      
+      // 分割字段，考虑函数中的逗号
+      const fields = [];
+      let currentField = '';
+      let parenCount = 0;
+      let inString = false;
+      let stringChar = '';
+      
+      for (let i = 0; i < selectClause.length; i++) {
+        const char = selectClause[i];
+        
+        if (!inString) {
+          if (char === '"' || char === "'") {
+            inString = true;
+            stringChar = char;
+          } else if (char === '(') {
+            parenCount++;
+          } else if (char === ')') {
+            parenCount--;
+          } else if (char === ',' && parenCount === 0) {
+            fields.push(currentField.trim());
+            currentField = '';
+            continue;
+          }
+        } else if (char === stringChar) {
+          inString = false;
+          stringChar = '';
+        }
+        
+        currentField += char;
+      }
+      
+      if (currentField.trim()) {
+        fields.push(currentField.trim());
+      }
+      
+      // 解析每个字段的别名
+      fields.forEach(field => {
+        // 匹配 AS 别名模式
+        const asMatch = field.match(/^(.+?)\s+AS\s+([a-zA-Z0-9_]+)$/i);
+        if (asMatch) {
+          aliases.push({
+            originalField: asMatch[1].trim(),
+            alias: asMatch[2].trim()
+          });
+          return;
+        }
+        
+        // 匹配隐式别名模式 (field alias, 不使用AS关键字)
+        // 匹配模式：word_or_qualified_name space alias_name
+        const implicitMatch = field.match(/^([a-zA-Z0-9_.]+(?:\([^)]*\))?)\s+([a-zA-Z0-9_]+)$/);
+        if (implicitMatch && !implicitMatch[2].match(/^(FROM|WHERE|GROUP|ORDER|HAVING)$/i)) {
+          aliases.push({
+            originalField: implicitMatch[1].trim(),
+            alias: implicitMatch[2].trim()
+          });
+        }
+      });
+      
+    } catch (error) {
+      console.log('Error parsing SELECT field aliases:', error);
+    }
+    
+    return aliases;
+  };
+
   const editorDidMount = (editor, monaco) => {
     editorRef.current = editor;
 
@@ -735,6 +816,87 @@ function CodeEditor() {
                 ]
               };
             }
+          }
+        }
+
+        // 检查当前单词是否是表别名
+        const usedTablesAndAliases = getUsedTablesAndAliases();
+        for (const [alias, tableName] of usedTablesAndAliases) {
+          if (alias.toLowerCase() === word.word.toLowerCase() && alias !== tableName) {
+            // 找到对应的表信息
+            const table = getTables().find(t => t.name.toLowerCase() === tableName.toLowerCase());
+            if (table) {
+              return {
+                contents: [
+                  {value: `**Table Alias:** ${alias}`},
+                  {value: `**Table:** ${table.name}`},
+                  {value: `**Description:** ${table.comment || 'No description available'}`},
+                  {value: `**Columns:** \n\n | Name | Type | Nullable | Default |\n | --- | --- | --- | --- |\n | ${table.columns.map(col => `${col.name} | ${col.dataType} | ${col.nullable ? 'true' : 'false'} | ${col.defaultValue || 'null'}`).join('\n | ')} |`},
+                  {value: '```sql\n' + table.ddl + '\n```'}
+                ]
+              };
+            }
+          }
+        }
+
+        // 检查当前单词是否是字段别名 (AS alias 或 field alias)
+        // 解析SELECT子句中的字段别名
+        const selectFieldAliases = parseSelectFieldAliases(statement);
+        const fieldAliasInfo = selectFieldAliases.find(alias => 
+          alias.alias && alias.alias.toLowerCase() === word.word.toLowerCase()
+        );
+        if (fieldAliasInfo) {
+          // 尝试解析原始字段信息
+          let fieldDetails = null;
+          
+          // 如果是qualified field (table.field)
+          const qualifiedFieldMatch = fieldAliasInfo.originalField.match(/^([a-zA-Z0-9_]+)\.([a-zA-Z0-9_]+)$/);
+          if (qualifiedFieldMatch) {
+            const [, tableOrAlias, fieldName] = qualifiedFieldMatch;
+            let tableName = getTableFromAlias(tableOrAlias);
+            if (!tableName) {
+              const table = getTables().find(t => t.name.toLowerCase() === tableOrAlias.toLowerCase());
+              if (table) tableName = table.name;
+            }
+            if (tableName) {
+              fieldDetails = getColumnFromTable(tableName, fieldName);
+            }
+          } else {
+            // 如果是unqualified field，从context中查找
+            const tablesWithColumn = getTablesWithColumn(fieldAliasInfo.originalField);
+            if (tablesWithColumn.length > 0) {
+              const contextualField = tablesWithColumn.find(item => {
+                for (const [alias, tableName] of usedTablesAndAliases) {
+                  if (item.table.name.toLowerCase() === tableName.toLowerCase()) {
+                    return true;
+                  }
+                }
+                return false;
+              });
+              fieldDetails = contextualField || tablesWithColumn[0];
+            }
+          }
+
+          if (fieldDetails) {
+            return {
+              contents: [
+                {value: `**Field Alias:** ${fieldAliasInfo.alias}`},
+                {value: `**Original Field:** ${fieldAliasInfo.originalField}`},
+                {value: `**Table:** ${fieldDetails.table.name}`},
+                {value: `**Description:** ${fieldDetails.column.comment || 'No description available'}`},
+                {value: `**Type:** ${fieldDetails.column.dataType}`},
+                {value: `**Nullable:** ${fieldDetails.column.nullable ? 'Yes' : 'No'}`},
+                {value: `**Default Value:** ${fieldDetails.column.defaultValue || 'null'}`}
+              ]
+            };
+          } else {
+            return {
+              contents: [
+                {value: `**Field Alias:** ${fieldAliasInfo.alias}`},
+                {value: `**Original Expression:** ${fieldAliasInfo.originalField}`},
+                {value: `**Note:** This appears to be an alias for a computed expression or function`}
+              ]
+            };
           }
         }
 
