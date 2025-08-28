@@ -196,16 +196,12 @@ function CodeEditor() {
   const getTableFromAlias = (alias) => {
     if (!ast || !ast.current) return null;
     
-    console.log('getTableFromAlias called with alias:', alias);
-    console.log('AST structure:', JSON.stringify(ast.current, null, 2));
-    
     // 首先检查主 FROM 表
     if (ast.current.from) {
       const tableRef = ast.current.from.find(item =>
           (item.as === alias) || (!item.as && item.table === alias)
       );
       if (tableRef) {
-        console.log('Found alias in FROM:', tableRef);
         return tableRef.table;
       }
     }
@@ -215,14 +211,12 @@ function CodeEditor() {
       for (const joinClause of ast.current.join) {
         if (joinClause.table) {
           if ((joinClause.as === alias) || (!joinClause.as && joinClause.table === alias)) {
-            console.log('Found alias in JOIN:', joinClause);
             return joinClause.table;
           }
         }
       }
     }
     
-    console.log('Alias not found:', alias);
     return null;
   };
 
@@ -388,8 +382,8 @@ function CodeEditor() {
       sqlRef.current = statement;
       const opt = {database: 'MySQL'};
       let preSql = statement;
-      if (statement.trim().match(/(WHERE|LEFT JOIN|RIGHT JOIN|INNERR JOIN|JOIN|GROUP BY|ORDER BY)\s*$/i)) {
-        preSql = statement.trim().replace(/(WHERE|LEFT JOIN|RIGHT JOIN|INNERR JOIN|JOIN|GROUP BY|ORDER BY)\s*$/i, '');
+      if (statement.trim().match(/(WHERE|LEFT JOIN|RIGHT JOIN|INNER JOIN|JOIN|GROUP BY|ORDER BY)\s*$/i)) {
+        preSql = statement.trim().replace(/(WHERE|LEFT JOIN|RIGHT JOIN|INNER JOIN|JOIN|GROUP BY|ORDER BY)\s*$/i, '');
       }
       ast.current = parser.current.astify(preSql, opt);
       console.log('AST:', ast.current);
