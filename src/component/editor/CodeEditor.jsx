@@ -194,11 +194,36 @@ function CodeEditor() {
 
   // 从 AST 中获取别名对应的表名
   const getTableFromAlias = (alias) => {
-    if (!ast || !ast.current?.from) return null;
-    const tableRef = ast.current?.from.find(item =>
-        (item.as === alias) || (!item.as && item.table === alias)
-    );
-    return tableRef ? tableRef.table : null;
+    if (!ast || !ast.current) return null;
+    
+    console.log('getTableFromAlias called with alias:', alias);
+    console.log('AST structure:', JSON.stringify(ast.current, null, 2));
+    
+    // 首先检查主 FROM 表
+    if (ast.current.from) {
+      const tableRef = ast.current.from.find(item =>
+          (item.as === alias) || (!item.as && item.table === alias)
+      );
+      if (tableRef) {
+        console.log('Found alias in FROM:', tableRef);
+        return tableRef.table;
+      }
+    }
+    
+    // 然后检查 JOIN 表
+    if (ast.current.join) {
+      for (const joinClause of ast.current.join) {
+        if (joinClause.table) {
+          if ((joinClause.as === alias) || (!joinClause.as && joinClause.table === alias)) {
+            console.log('Found alias in JOIN:', joinClause);
+            return joinClause.table;
+          }
+        }
+      }
+    }
+    
+    console.log('Alias not found:', alias);
+    return null;
   };
 
   // 根据字段名查找所有包含该字段的表
@@ -237,18 +262,43 @@ function CodeEditor() {
 
   // 获取当前位置已使用的表名和别名
   const getUsedTablesAndAliases = () => {
+    const tableAliasMap = new Map();
+    
     if (ast.current && ast.current.length) {
-      return new Map(ast.current[0].from.map(item => [
-        item.as || item.table,
-        item.table
-      ]))
+      // 处理数组形式的 AST
+      if (ast.current[0].from) {
+        ast.current[0].from.forEach(item => {
+          tableAliasMap.set(item.as || item.table, item.table);
+        });
+      }
+      if (ast.current[0].join) {
+        ast.current[0].join.forEach(joinClause => {
+          if (joinClause.table) {
+            tableAliasMap.set(joinClause.as || joinClause.table, joinClause.table);
+          }
+        });
+      }
+      return tableAliasMap;
     }
-    if (!ast.current?.from) return new Map();
-
-    return new Map(ast.current.from.map(item => [
-      item.as || item.table,
-      item.table
-    ]));
+    
+    if (!ast.current) return new Map();
+    
+    // 处理单个对象形式的 AST
+    if (ast.current.from) {
+      ast.current.from.forEach(item => {
+        tableAliasMap.set(item.as || item.table, item.table);
+      });
+    }
+    
+    if (ast.current.join) {
+      ast.current.join.forEach(joinClause => {
+        if (joinClause.table) {
+          tableAliasMap.set(joinClause.as || joinClause.table, joinClause.table);
+        }
+      });
+    }
+    
+    return tableAliasMap;
   };
 
   // 获取当前位置所在的SQL子句
