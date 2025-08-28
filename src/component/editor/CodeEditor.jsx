@@ -208,8 +208,10 @@ function CodeEditor() {
     
     // 然后检查 JOIN 表
     if (ast.current.join) {
-      for (const joinClause of ast.current.join) {
-        if (joinClause.table) {
+      // 确保 join 是可迭代的（数组）
+      const joinClauses = Array.isArray(ast.current.join) ? ast.current.join : [ast.current.join];
+      for (const joinClause of joinClauses) {
+        if (joinClause && joinClause.table) {
           if ((joinClause.as === alias) || (!joinClause.as && joinClause.table === alias)) {
             return joinClause.table;
           }
@@ -266,8 +268,10 @@ function CodeEditor() {
         });
       }
       if (ast.current[0].join) {
-        ast.current[0].join.forEach(joinClause => {
-          if (joinClause.table) {
+        // 确保 join 是可迭代的（数组）
+        const joinClauses = Array.isArray(ast.current[0].join) ? ast.current[0].join : [ast.current[0].join];
+        joinClauses.forEach(joinClause => {
+          if (joinClause && joinClause.table) {
             tableAliasMap.set(joinClause.as || joinClause.table, joinClause.table);
           }
         });
@@ -285,8 +289,10 @@ function CodeEditor() {
     }
     
     if (ast.current.join) {
-      ast.current.join.forEach(joinClause => {
-        if (joinClause.table) {
+      // 确保 join 是可迭代的（数组）
+      const joinClauses = Array.isArray(ast.current.join) ? ast.current.join : [ast.current.join];
+      joinClauses.forEach(joinClause => {
+        if (joinClause && joinClause.table) {
           tableAliasMap.set(joinClause.as || joinClause.table, joinClause.table);
         }
       });
